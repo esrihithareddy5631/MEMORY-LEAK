@@ -1,0 +1,3568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>MEMORY//LEAK</title>
+<style>
+:root {
+  --bg: #03050a;
+  --panel: #0b1017;
+  --panel2: #0e141c;
+  --line: rgba(140, 170, 195, 0.16);
+  --line-soft: rgba(140, 170, 195, 0.08);
+  --text: #d8dfe6;
+  --text-dim: #7f93a3;
+  --cyan: #3ee6e0;
+  --blue: #5b8fd9;
+  --amber: #e0a94a;
+  --red: #ff4d5e;
+  --green: #5ee089;
+  --font: 'Consolas', 'SFMono-Regular', 'Menlo', 'Courier New', monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0; width: 100%; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font);
+  overflow: hidden;
+  -webkit-user-select: none; user-select: none;
+}
+
+#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+
+.hidden { display: none !important; }
+
+button { font-family: var(--font); cursor: pointer; }
+input[type="range"] { accent-color: var(--cyan); cursor: pointer; }
+
+/* ---------------- Loading screen ---------------- */
+#loadingScreen {
+  position: fixed; inset: 0; z-index: 100;
+  background: radial-gradient(ellipse at center, #0a0f16 0%, #03050a 70%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  transition: opacity 0.4s ease;
+}
+.lTitle {
+  font-size: 30px; letter-spacing: 4px; color: var(--text);
+  font-weight: 600;
+}
+.lTitle span { color: var(--cyan); }
+#loadingLines { margin-top: 26px; min-height: 90px; text-align: left; width: 360px; }
+#loadingLines div { font-size: 13px; color: var(--text-dim); margin: 6px 0; opacity: 0; animation: fadein 0.3s ease forwards; }
+#loadingLines div.done { color: var(--cyan); }
+#loadingLines div.done::after { content: ' \2713'; }
+@keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+#loadingBarOuter { width: 360px; height: 3px; background: var(--line-soft); margin-top: 18px; border: 1px solid var(--line); }
+#loadingBarInner { height: 100%; width: 0%; background: linear-gradient(90deg, var(--blue), var(--cyan)); transition: width 0.4s ease; }
+
+/* ---------------- Level transition cinematic ---------------- */
+#levelTransitionScreen {
+  position: fixed; inset: 0; z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(8,13,20,0.97) 0%, rgba(2,4,8,0.995) 78%);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.55s ease;
+  overflow: hidden;
+}
+#levelTransitionScreen.show { opacity: 1; pointer-events: auto; }
+.ltGrid {
+  position: absolute; inset: -20%;
+  background-image:
+    linear-gradient(rgba(62,230,224,0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(62,230,224,0.06) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(ellipse at center, black 0%, transparent 65%);
+  mask-image: radial-gradient(ellipse at center, black 0%, transparent 65%);
+  animation: ltGridPulse 3.2s ease-in-out infinite;
+}
+@keyframes ltGridPulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.9; } }
+.ltScan {
+  position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(255,255,255,0.03) 0px, rgba(255,255,255,0.03) 1px, transparent 1px, transparent 3px);
+  animation: ltScanMove 5s linear infinite;
+}
+@keyframes ltScanMove { from { transform: translateY(0); } to { transform: translateY(160px); } }
+.ltContent { position: relative; text-align: center; padding: 0 24px; }
+.ltTag {
+  font-size: 12px; letter-spacing: 7px; color: var(--text-dim);
+  text-transform: uppercase; margin-bottom: 16px; opacity: 0;
+}
+.ltTag.reveal { animation: ltFadeUp 0.5s ease forwards; }
+.ltMain {
+  font-size: clamp(32px, 6vw, 58px); font-weight: 700; letter-spacing: 6px; color: var(--cyan);
+  text-shadow: 0 0 18px rgba(62,230,224,0.55), 0 0 44px rgba(62,230,224,0.25);
+  opacity: 0; white-space: nowrap;
+}
+.ltMain.reveal { animation: ltGlitchIn 0.65s steps(3, end) forwards; }
+.ltSub {
+  margin-top: 20px; font-size: 14px; letter-spacing: 2px; color: var(--text-dim); opacity: 0;
+}
+.ltSub.reveal { animation: ltFadeUp 0.5s ease forwards; }
+.ltSub .hl { color: var(--amber); font-weight: 700; letter-spacing: 3px; }
+.ltDivider {
+  width: 90px; height: 1px; background: var(--line); margin: 20px auto 0; opacity: 0;
+}
+.ltDivider.reveal { animation: ltFadeUp 0.5s ease forwards; }
+@keyframes ltFadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ltGlitchIn {
+  0%   { opacity: 0; transform: translate(-8px, 0) skewX(3deg); filter: blur(5px); }
+  25%  { opacity: 1; transform: translate(5px, 0) skewX(-2deg); filter: blur(0); }
+  40%  { transform: translate(-3px, 0) skewX(1deg); }
+  55%  { transform: translate(2px, 0) skewX(-1deg); }
+  70%  { transform: translate(-1px, 0) skewX(0); }
+  100% { opacity: 1; transform: translate(0, 0) skewX(0); }
+}
+
+/* ---------------- Generic overlay ---------------- */
+.overlay {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(2, 4, 8, 0.72);
+  backdrop-filter: blur(2px);
+  animation: fadein 0.18s ease;
+}
+
+.menuBox {
+  width: 380px; padding: 34px 30px;
+  background: linear-gradient(180deg, var(--panel), var(--panel2));
+  border: 1px solid var(--line);
+  text-align: center;
+  box-shadow: 0 0 60px rgba(62, 230, 224, 0.05), 0 20px 50px rgba(0,0,0,0.5);
+}
+.menuBox .title { font-size: 28px; font-weight: 700; letter-spacing: 2px; }
+.menuBox .title span { color: var(--cyan); }
+.menuBox .tagline { color: var(--text-dim); font-style: italic; font-size: 13px; margin: 10px 0 26px; }
+.menuBox .hint { color: var(--text-dim); font-size: 11px; letter-spacing: 0.5px; }
+
+.menuBtn {
+  display: block; width: 100%; padding: 12px 14px; margin: 8px 0;
+  background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+  font-size: 13px; letter-spacing: 2px; font-weight: 600;
+  transition: all 0.15s ease;
+}
+.menuBtn:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); background: rgba(62,230,224,0.06); }
+.menuBtn:active:not(:disabled) { transform: scale(0.98); }
+.menuBtn:disabled, .menuBtn.disabledBtn { opacity: 0.35; cursor: not-allowed; }
+.menuBtn.ghost { background: transparent; }
+
+/* ---------------- Terminal-style frame ---------------- */
+.termFrame {
+  width: 460px; max-width: 92vw; max-height: 86vh;
+  background: linear-gradient(180deg, var(--panel), var(--panel2));
+  border: 1px solid var(--line);
+  box-shadow: 0 0 60px rgba(62, 230, 224, 0.05), 0 20px 50px rgba(0,0,0,0.55);
+  display: flex; flex-direction: column;
+}
+.termBar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
+  background: rgba(255,255,255,0.02);
+}
+.termDot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.termBar .h { margin-left: 8px; font-size: 12px; letter-spacing: 1.5px; color: var(--text-dim); }
+.panelBody { padding: 20px 22px; overflow-y: auto; }
+.panelBody::-webkit-scrollbar { width: 8px; }
+.panelBody::-webkit-scrollbar-thumb { background: var(--line); }
+
+.sectionLabel {
+  font-size: 11px; letter-spacing: 2px; color: var(--text-dim);
+  margin: 16px 0 8px; text-transform: uppercase; border-bottom: 1px solid var(--line-soft); padding-bottom: 6px;
+}
+.explain { font-size: 13px; line-height: 1.55; color: var(--text); }
+
+.alertHead { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
+.alertHead .tag {
+  align-self: flex-start; font-size: 10px; letter-spacing: 1.5px; padding: 3px 8px;
+  border: 1px solid var(--red); color: var(--red); background: rgba(255,77,94,0.08);
+}
+.alertHead h2 { margin: 0; font-size: 17px; letter-spacing: 0.5px; }
+
+.fieldRow { display: flex; gap: 14px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+.fieldRow .k { color: var(--text-dim); width: 130px; flex: none; letter-spacing: 1px; font-size: 11px; text-transform: uppercase; align-self: center; }
+.fieldRow .v { color: var(--text); flex: 1; }
+
+.levelRow {
+  display: flex; align-items: center; gap: 14px; padding: 9px 8px; font-size: 13px;
+  border-bottom: 1px solid var(--line-soft); border-left: 3px solid transparent;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.levelRow .k { color: var(--text-dim); width: 130px; flex: none; letter-spacing: 1px; font-size: 11px; text-transform: uppercase; }
+.levelRow .v { color: var(--text); flex: 1; }
+.levelRow.levelRowFocused { border-left-color: var(--cyan); background: rgba(62,230,224,0.07); }
+.levelRow.levelRowFocused .k { color: var(--cyan); }
+
+.btnRow { display: flex; flex-wrap: wrap; gap: 8px; }
+.actBtn {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+  padding: 9px 12px; font-size: 12px; letter-spacing: 0.5px;
+}
+.actBtn:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); }
+.actBtn:disabled { opacity: 0.3; cursor: not-allowed; }
+.actBtn.done { border-color: var(--blue); color: var(--blue); background: rgba(91,143,217,0.08); }
+.actBtn.decideBtn { border-color: var(--amber); }
+.actBtn.decideBtn:hover { border-color: var(--red); color: var(--red); }
+
+.clue {
+  font-size: 12.5px; line-height: 1.5; color: var(--text);
+  border-left: 2px solid var(--blue); padding: 6px 10px; margin-top: 8px;
+  background: rgba(91,143,217,0.05);
+}
+
+.resultTag {
+  display: inline-block; font-size: 16px; font-weight: 700; letter-spacing: 1px;
+  padding: 8px 14px; border: 1px solid var(--line); margin-bottom: 10px;
+}
+.resultTag.correct { color: var(--green); border-color: var(--green); background: rgba(94,224,137,0.08); }
+.resultTag.partial { color: var(--amber); border-color: var(--amber); background: rgba(224,169,74,0.08); }
+.resultTag.wrong { color: var(--red); border-color: var(--red); background: rgba(255,77,94,0.08); }
+
+/* ---------------- HUD ---------------- */
+#crosshair {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 6px; height: 6px; border-radius: 50%;
+  background: rgba(216,223,230,0.85); z-index: 20; pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+}
+#prompt {
+  position: fixed; bottom: 14%; left: 50%; transform: translateX(-50%);
+  background: rgba(6,10,16,0.82); border: 1px solid var(--cyan); color: var(--cyan);
+  padding: 8px 16px; font-size: 12px; letter-spacing: 1px; z-index: 20;
+  display: none; pointer-events: none;
+}
+#hud {
+  position: fixed; top: 22px; left: 22px; z-index: 15; width: 230px;
+  background: rgba(6,10,16,0.55); border: 1px solid var(--line); padding: 12px 14px;
+  pointer-events: none;
+}
+#hud .label { font-size: 10px; letter-spacing: 1.5px; color: var(--text-dim); text-transform: uppercase; }
+#integrityText { font-size: 20px; font-weight: 700; margin: 2px 0 6px; }
+#integrityBar { width: 100%; height: 5px; background: var(--line-soft); border: 1px solid var(--line); }
+#integrityFill { height: 100%; width: 100%; background: linear-gradient(90deg,#5b8fd9,#3ee6e0); transition: width 0.3s ease, background 0.3s ease; }
+#hudMissionText { margin-top: 10px; font-size: 11px; color: var(--text-dim); line-height: 1.5; letter-spacing: 0.5px; }
+.hudField { color: var(--text); font-size: 12px; margin: 2px 0; }
+.hudFieldKey { display: inline-block; width: 62px; color: var(--text-dim); letter-spacing: 1px; }
+.hudHint { margin-top: 6px; color: var(--text-dim); }
+
+#zeroPanel {
+  position: fixed; top: 22px; right: 22px; z-index: 15;
+  background: rgba(6,10,16,0.55); border: 1px solid var(--line); padding: 10px 14px;
+  font-size: 11px; letter-spacing: 1px; color: var(--text-dim); pointer-events: none;
+}
+#zeroPanel b { color: var(--amber); letter-spacing: 2px; }
+#zeroStateText { color: var(--text); }
+
+#clickToResumeHint {
+  position: fixed; bottom: 6%; left: 50%; transform: translateX(-50%);
+  background: rgba(6,10,16,0.82); border: 1px solid var(--line); color: var(--text-dim);
+  padding: 7px 14px; font-size: 11px; letter-spacing: 1px; z-index: 20;
+}
+
+/* ---------------- Settings ---------------- */
+.srow { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.srow span { font-size: 12px; color: var(--text-dim); letter-spacing: 0.5px; }
+.srow input[type="range"] { width: 160px; }
+
+@media (max-width: 560px) {
+  .menuBox, .termFrame { width: 94vw; }
+  .fieldRow { flex-direction: column; gap: 2px; }
+  .fieldRow .k { width: auto; }
+  #hud { width: 190px; }
+}
+
+/* ---------------- Info / intelligence database screen ---------------- */
+.infoFrame { width: 860px; max-width: 96vw; max-height: 90vh; }
+.infoBody { padding: 22px 26px 26px; }
+.infoMasthead { text-align: center; margin-bottom: 18px; }
+.infoMastTitle { font-size: 26px; font-weight: 700; letter-spacing: 3px; }
+.infoMastTitle span { color: var(--cyan); }
+.infoMastSub { margin-top: 6px; font-size: 11px; letter-spacing: 3px; color: var(--text-dim); text-transform: uppercase; }
+
+.infoFlow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 12px; padding: 10px 12px;
+  background: rgba(62,230,224,0.04); border: 1px solid var(--line-soft);
+  font-size: 11px; letter-spacing: 1px; color: var(--text-dim);
+}
+.infoFlow span { padding: 3px 8px; border: 1px solid var(--line); color: var(--text); background: var(--panel2); }
+.infoFlow span.hl { color: var(--cyan); border-color: var(--cyan); }
+.infoFlow i { color: var(--text-dim); font-style: normal; }
+
+.infoCardsRow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 18px; }
+.infoCard {
+  background: rgba(255,255,255,0.02); border: 1px solid var(--line); padding: 14px 16px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.infoCard:hover { border-color: rgba(62,230,224,0.4); box-shadow: 0 0 24px rgba(62,230,224,0.06); }
+.infoCardZero { border-color: rgba(224,169,74,0.35); box-shadow: 0 0 24px rgba(224,169,74,0.05); }
+.infoCardTag {
+  display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: 2px;
+  color: var(--cyan); border: 1px solid var(--cyan); background: rgba(62,230,224,0.08);
+  padding: 3px 9px; margin-bottom: 10px;
+}
+.infoCardTag.zero { color: var(--amber); border-color: var(--amber); background: rgba(224,169,74,0.1); }
+.infoList { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-dim); line-height: 1.7; }
+
+.zeroFlow { margin-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.zeroFlowStep {
+  font-size: 10.5px; letter-spacing: 1.5px; color: var(--text); border: 1px solid var(--line);
+  background: var(--panel2); padding: 5px 12px; width: 100%; text-align: center;
+}
+.zeroFlowStep.hl { color: var(--amber); border-color: var(--amber); background: rgba(224,169,74,0.08); }
+.zeroFlowArrow { color: var(--text-dim); font-size: 12px; line-height: 1; }
+
+.threatGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.threatCard {
+  background: rgba(255,255,255,0.02); border: 1px solid var(--line); cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  outline: none;
+}
+.threatCard:hover, .threatCard:focus-visible { border-color: var(--cyan); box-shadow: 0 0 20px rgba(62,230,224,0.1); transform: translateY(-1px); }
+.threatCardHead { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; }
+.threatName { font-size: 12px; font-weight: 700; letter-spacing: 1.5px; color: var(--text); }
+.threatCard:hover .threatName, .threatCard.open .threatName, .threatCard:focus-visible .threatName { color: var(--cyan); }
+.threatChevron { color: var(--text-dim); font-size: 14px; transition: transform 0.15s ease; }
+.threatCard.open .threatChevron { transform: rotate(45deg); color: var(--cyan); }
+.threatDesc {
+  max-height: 0; overflow: hidden; padding: 0 14px;
+  transition: max-height 0.22s ease, padding 0.22s ease;
+  border-top: 1px solid transparent;
+}
+.threatCard.open .threatDesc { max-height: 220px; padding: 0 14px 14px; border-top-color: var(--line-soft); }
+.threatDesc p { margin: 8px 0 0; font-size: 12px; line-height: 1.55; color: var(--text); }
+.threatDesc p.threatCtx { color: var(--text-dim); font-style: italic; }
+
+.htpGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.htpStep { background: rgba(255,255,255,0.02); border: 1px solid var(--line); padding: 12px 14px; }
+.htpNum { font-size: 18px; font-weight: 700; color: var(--cyan); letter-spacing: 1px; }
+.htpTitle { font-size: 12px; font-weight: 700; letter-spacing: 1.5px; margin: 4px 0 6px; }
+.htpText { font-size: 11.5px; line-height: 1.5; color: var(--text-dim); }
+.infoNote { margin-top: 10px; color: var(--text-dim); font-style: italic; font-size: 12px; }
+
+.infoTwoCol { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 4px; }
+.outcomeCard { border: 1px solid var(--line); padding: 10px 12px; margin-bottom: 8px; }
+.outcomeCard.correct { border-color: rgba(94,224,137,0.35); background: rgba(94,224,137,0.05); }
+.outcomeCard.partial { border-color: rgba(224,169,74,0.35); background: rgba(224,169,74,0.05); }
+.outcomeCard.wrong { border-color: rgba(255,77,94,0.35); background: rgba(255,77,94,0.05); }
+.outcomeTag { font-size: 11.5px; font-weight: 700; letter-spacing: 1.5px; margin-bottom: 4px; }
+.outcomeCard.correct .outcomeTag { color: var(--green); }
+.outcomeCard.partial .outcomeTag { color: var(--amber); }
+.outcomeCard.wrong .outcomeTag { color: var(--red); }
+
+.progGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.progStat { border: 1px solid var(--line); background: rgba(255,255,255,0.02); padding: 10px 12px; text-align: center; }
+.progNum { font-size: 20px; font-weight: 700; color: var(--cyan); }
+.progLabel { font-size: 9.5px; letter-spacing: 1.5px; color: var(--text-dim); margin-top: 2px; }
+.progLevels { font-size: 11.5px; letter-spacing: 1px; color: var(--text); border: 1px solid var(--line-soft); padding: 8px 10px; text-align: center; }
+
+@media (max-width: 700px) {
+  .infoCardsRow { grid-template-columns: 1fr; }
+  .threatGrid { grid-template-columns: 1fr 1fr; }
+  .htpGrid { grid-template-columns: 1fr 1fr; }
+  .infoTwoCol { grid-template-columns: 1fr; gap: 8px; }
+}
+@media (max-width: 460px) {
+  .threatGrid { grid-template-columns: 1fr; }
+  .htpGrid { grid-template-columns: 1fr; }
+  .progGrid { grid-template-columns: 1fr 1fr; }
+}
+
+</style>
+</head>
+<body>
+<div id="loadingScreen">
+  <div class="lTitle">NEXUS<span>//</span>SECURITY NETWORK</div>
+  <div id="loadingLines"></div>
+  <div id="loadingBarOuter"><div id="loadingBarInner"></div></div>
+</div>
+
+<canvas id="c"></canvas>
+
+<div id="crosshair" class="hidden"></div>
+<div id="prompt"></div>
+<div id="clickToResumeHint" class="hidden">CLICK TO ENABLE MOUSE LOOK</div>
+
+<div id="hud" class="hidden">
+  <div class="label">System Integrity</div>
+  <div id="integrityText">100%</div>
+  <div id="integrityBar"><div id="integrityFill"></div></div>
+  <div id="hudMissionText">BEGINNER — MISSION 1/5</div>
+</div>
+<div id="zeroPanel" class="hidden"><b>ZERO</b> <span id="zeroStateText">OBSERVING</span></div>
+
+<div id="mainMenu" class="overlay hidden">
+  <div class="menuBox">
+    <div class="title">MEMORY<span>//</span>LEAK</div>
+    <div class="tagline">&ldquo;Every defense leaves a pattern.&rdquo;</div>
+    <button class="menuBtn" id="btnPlay">PLAY</button>
+    <button class="menuBtn" id="btnContinue">CONTINUE</button>
+    <button class="menuBtn" id="btnInfo">INFO</button>
+    <button class="menuBtn" id="btnSettings">SETTINGS</button>
+    <button class="menuBtn" id="btnQuit">QUIT</button>
+    <p class="hint">WASD / ARROWS MOVE &middot; MOUSE LOOK &middot; SHIFT SPRINT &middot; SPACE JUMP &middot; E INTERACT &middot; ESC PAUSE</p>
+  </div>
+</div>
+
+<div id="infoPanel" class="overlay hidden">
+  <div class="termFrame infoFrame">
+    <div class="termBar">
+      <div class="termDot" style="background:#c9515f"></div>
+      <div class="termDot" style="background:#d1a13f"></div>
+      <div class="termDot" style="background:#4fae6e"></div>
+      <span class="h">NEXUS-SOC :: INTELLIGENCE-DATABASE</span>
+    </div>
+    <div class="panelBody infoBody">
+
+      <div class="infoMasthead">
+        <div class="infoMastTitle">MEMORY<span>//</span>LEAK</div>
+        <div class="infoMastSub">NEXUS SECURITY INTELLIGENCE DATABASE</div>
+      </div>
+
+      <div class="sectionLabel">About MEMORY//LEAK</div>
+      <div class="explain">You are a cybersecurity analyst defending NEXUS from evolving cyber threats. Every incident must be detected, investigated and contained before system integrity is lost.</div>
+      <div class="infoFlow">
+        <span>ATTACK</span><i>&rarr;</i><span>ALERT</span><i>&rarr;</i><span>INVESTIGATE</span><i>&rarr;</i><span>DEFEND</span><i>&rarr;</i><span>CONSEQUENCE</span><i>&rarr;</i><span>RECOVER</span><i>&rarr;</i><span class="hl">ZERO ADAPTS</span>
+      </div>
+      <div class="explain" style="margin-top:10px">You are not simply answering cybersecurity questions. You physically operate inside a 3D SOC environment &mdash; investigating incidents, choosing evidence to inspect, selecting a defensive response, and dealing with the consequences of your decisions.</div>
+
+      <div class="infoCardsRow">
+        <div class="infoCard">
+          <div class="infoCardTag">NEXUS</div>
+          <div class="explain">NEXUS is the fictional organization you are protecting. Its users, accounts, endpoints, network infrastructure and sensitive data are under continuous cyber attack.</div>
+        </div>
+        <div class="infoCard">
+          <div class="infoCardTag">PLAYER</div>
+          <div class="explain">You are the cybersecurity/SOC analyst responsible for detecting, investigating and containing incidents inside NEXUS.</div>
+          <ul class="infoList">
+            <li>Receives alerts</li>
+            <li>Travels through the 3D SOC</li>
+            <li>Investigates evidence</li>
+            <li>Identifies the threat</li>
+            <li>Chooses a defensive action</li>
+            <li>Tries to protect system integrity</li>
+          </ul>
+        </div>
+        <div class="infoCard infoCardZero">
+          <div class="infoCardTag zero">ZERO</div>
+          <div class="explain">ZERO is the adaptive attacker behind the incidents. It watches how you defend NEXUS &mdash; the types of threats you encounter, what evidence you investigate, which defenses you choose, how completely you respond, and the patterns in your decisions.</div>
+          <div class="explain"><b style="color:var(--amber)">Your behaviour influences future attacks.</b> ZERO is not a traditional fixed boss &mdash; it adapts its future attack strategy based on your previous behaviour.</div>
+          <div class="zeroFlow">
+            <div class="zeroFlowStep">PLAYER BEHAVIOUR</div>
+            <div class="zeroFlowArrow">&darr;</div>
+            <div class="zeroFlowStep">ZERO OBSERVES</div>
+            <div class="zeroFlowArrow">&darr;</div>
+            <div class="zeroFlowStep">ZERO IDENTIFIES PATTERNS</div>
+            <div class="zeroFlowArrow">&darr;</div>
+            <div class="zeroFlowStep hl">FUTURE ATTACKS ADAPT</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sectionLabel">Threat Database</div>
+      <div class="explain" style="margin-bottom:10px">Know the threat. Investigate the evidence. Choose the right defense.</div>
+      <div class="threatGrid" id="threatGrid">
+        <div class="threatCard" data-threat="phishing" tabindex="0">
+          <div class="threatCardHead"><span class="threatName">PHISHING</span><span class="threatChevron">+</span></div>
+          <div class="threatDesc">
+            <p>An attacker sends a fake email or message designed to trick someone into clicking a malicious link, opening an attachment, or revealing sensitive information.</p>
+            <p class="threatCtx">Investigate the sender, URL and message context before deciding how to respond.</p>
+          </div>
+        </div>
+        <div class="threatCard" data-threat="social" tabindex="0">
+          <div class="threatCardHead"><span class="threatName">SOCIAL ENGINEERING</span><span class="threatChevron">+</span></div>
+          <div class="threatDesc">
+            <p>An attacker manipulates a person into trusting them or revealing information by pretending to be someone they know, such as a colleague, manager or trusted organization.</p>
+            <p class="threatCtx">Verify the person's identity and do not trust a request simply because it appears urgent or authoritative.</p>
+          </div>
+        </div>
+        <div class="threatCard" data-threat="credential" tabindex="0">
+          <div class="threatCardHead"><span class="threatName">CREDENTIAL THEFT</span><span class="threatChevron">+</span></div>
+          <div class="threatDesc">
+            <p>An attacker attempts to steal usernames, passwords or other login information so they can access an account.</p>
+            <p class="threatCtx">Investigate the suspicious login and protect the account using actions such as MFA, password reset or access revocation.</p>
+          </div>
+        </div>
+        <div class="threatCard" data-threat="malware" tabindex="0">
+          <div class="threatCardHead"><span class="threatName">MALWARE</span><span class="threatChevron">+</span></div>
+          <div class="threatDesc">
+            <p>Malicious software that is designed to damage systems, steal information, spy on users, or give attackers unauthorized access.</p>
+            <p class="threatCtx">Investigate the affected endpoint and contain the threat before it spreads.</p>
+          </div>
+        </div>
+        <div class="threatCard" data-threat="network" tabindex="0">
+          <div class="threatCardHead"><span class="threatName">NETWORK INTRUSION</span><span class="threatChevron">+</span></div>
+          <div class="threatDesc">
+            <p>An attacker gains unauthorized access to a network or attempts to move through network systems that they should not control.</p>
+            <p class="threatCtx">Analyze suspicious network activity and use monitoring, firewall or blocking controls to contain the intrusion.</p>
+          </div>
+        </div>
+        <div class="threatCard" data-threat="exfil" tabindex="0">
+          <div class="threatCardHead"><span class="threatName">DATA EXFILTRATION</span><span class="threatChevron">+</span></div>
+          <div class="threatDesc">
+            <p>An attacker secretly transfers sensitive information out of an organization without authorization.</p>
+            <p class="threatCtx">Identify suspicious data movement, protect sensitive resources and contain unauthorized access.</p>
+          </div>
+        </div>
+        <div class="threatCard" data-threat="ransomware" tabindex="0">
+          <div class="threatCardHead"><span class="threatName">RANSOMWARE</span><span class="threatChevron">+</span></div>
+          <div class="threatDesc">
+            <p>Malicious software that locks, encrypts or disrupts systems and data, allowing attackers to demand something in return.</p>
+            <p class="threatCtx">Protect critical systems, isolate the affected area and recover systems before the damage spreads.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="sectionLabel">How To Play</div>
+      <div class="htpGrid">
+        <div class="htpStep"><div class="htpNum">01</div><div class="htpTitle">DETECT</div><div class="htpText">An incident appears and an alert identifies a potential threat.</div></div>
+        <div class="htpStep"><div class="htpNum">02</div><div class="htpTitle">INVESTIGATE</div><div class="htpText">Move to the affected workstation and inspect available evidence.</div></div>
+        <div class="htpStep"><div class="htpNum">03</div><div class="htpTitle">DEFEND</div><div class="htpText">Choose the defensive action that best matches what your investigation reveals.</div></div>
+        <div class="htpStep"><div class="htpNum">04</div><div class="htpTitle">SURVIVE</div><div class="htpText">Your decision affects system integrity, mission outcome and what ZERO may do next.</div></div>
+      </div>
+      <div class="explain infoNote">Not every piece of evidence is useful. Some evidence may be weak, irrelevant or misleading.</div>
+
+      <div class="infoTwoCol">
+        <div>
+          <div class="sectionLabel">Mission Outcomes</div>
+          <div class="outcomeCard correct"><div class="outcomeTag">SECURED</div><div class="explain">The threat was correctly identified and contained with minimal impact.</div></div>
+          <div class="outcomeCard partial"><div class="outcomeTag">CONTAINED</div><div class="explain">The threat was stopped, but the response caused some damage or loss of integrity.</div></div>
+          <div class="outcomeCard wrong"><div class="outcomeTag">BREACHED</div><div class="explain">The response failed to stop the attack and system integrity suffered significantly.</div></div>
+          <div class="explain infoNote">System integrity starts at 100%. If it reaches 0%, NEXUS is breached and the run ends.</div>
+        </div>
+        <div>
+          <div class="sectionLabel">Progression</div>
+          <div class="progGrid">
+            <div class="progStat"><div class="progNum">6</div><div class="progLabel">LEVELS</div></div>
+            <div class="progStat"><div class="progNum">30</div><div class="progLabel">MISSIONS</div></div>
+            <div class="progStat"><div class="progNum">7</div><div class="progLabel">THREAT FAMILIES</div></div>
+            <div class="progStat"><div class="progNum">1</div><div class="progLabel">ADAPTIVE FINAL PROTOCOL</div></div>
+          </div>
+          <div class="progLevels">BEGINNER &middot; EASY &middot; MEDIUM &middot; HARD &middot; PRO &middot; IMPOSSIBLE</div>
+          <div class="explain infoNote">Each level increases the complexity of investigation and deception. IMPOSSIBLE culminates in a personalized multi-stage ZERO final protocol based on the player's accumulated behaviour.</div>
+        </div>
+      </div>
+
+      <button class="menuBtn" id="btnCloseInfo" style="margin-top:20px">BACK</button>
+    </div>
+  </div>
+</div>
+
+<div id="levelSelectScreen" class="overlay hidden">
+  <div class="menuBox" style="width:560px; text-align:left">
+    <div class="title" style="font-size:22px; text-align:center; margin-bottom:4px">SELECT LEVEL</div>
+    <p class="hint" style="text-align:center; margin:0 0 16px">&uarr; &darr; NAVIGATE &middot; ENTER TO LAUNCH &middot; OR CLICK</p>
+    <div id="levelGrid"></div>
+    <div style="display:flex; gap:10px; margin-top:18px">
+      <button class="menuBtn ghost" id="btnLevelSelectLogs" style="flex:1">MISSION LOGS</button>
+      <button class="menuBtn ghost" id="btnLevelSelectBack" style="flex:1">BACK</button>
+    </div>
+  </div>
+</div>
+
+<div id="terminalPanel" class="overlay hidden">
+  <div class="termFrame" style="width:520px">
+    <div class="termBar">
+      <div class="termDot" style="background:#c9515f"></div>
+      <div class="termDot" style="background:#d1a13f"></div>
+      <div class="termDot" style="background:#4fae6e"></div>
+      <span class="h">NEXUS-SOC :: INCIDENT-RESPONSE-TERMINAL</span>
+    </div>
+    <div class="panelBody" id="terminalBody"></div>
+  </div>
+</div>
+
+<div id="resultPanel" class="overlay hidden">
+  <div class="termFrame" style="width:520px">
+    <div class="termBar">
+      <div class="termDot" style="background:#c9515f"></div>
+      <div class="termDot" style="background:#d1a13f"></div>
+      <div class="termDot" style="background:#4fae6e"></div>
+      <span class="h" id="resultHead">INCIDENT RESULT</span>
+    </div>
+    <div class="panelBody">
+      <div class="resultTag" id="resultTag">RESULT</div>
+      <div class="explain" id="resultExplain"></div>
+      <div id="resultFindings"></div>
+      <div class="fieldRow"><div class="k">Integrity</div><div class="v" id="resultIntegrityDelta"></div></div>
+      <div class="sectionLabel">ZERO Behavioural Update</div>
+      <div class="explain" id="resultZeroNote"></div>
+      <button class="menuBtn" id="btnResultContinue" style="margin-top:18px">CONTINUE</button>
+    </div>
+  </div>
+</div>
+
+<div id="levelTransitionScreen" class="hidden">
+  <div class="ltGrid"></div>
+  <div class="ltScan"></div>
+  <div class="ltContent">
+    <div class="ltTag" id="ltTag">LEVEL COMPLETE</div>
+    <div class="ltMain" id="ltMain">BEGINNER</div>
+    <div class="ltDivider" id="ltDivider"></div>
+    <div class="ltSub" id="ltSub"></div>
+  </div>
+</div>
+
+<div id="levelCompletePanel" class="overlay hidden">
+  <div class="termFrame" style="width:460px">
+    <div class="termBar">
+      <div class="termDot" style="background:#c9515f"></div>
+      <div class="termDot" style="background:#d1a13f"></div>
+      <div class="termDot" style="background:#4fae6e"></div>
+      <span class="h">LEVEL COMPLETE</span>
+    </div>
+    <div class="panelBody">
+      <div class="resultTag correct" id="levelCompleteTitle">LEVEL COMPLETE</div>
+      <div class="fieldRow"><div class="k">Secured</div><div class="v" id="lcCorrect"></div></div>
+      <div class="fieldRow"><div class="k">Contained</div><div class="v" id="lcPartial"></div></div>
+      <div class="fieldRow"><div class="k">Breached</div><div class="v" id="lcWrong"></div></div>
+      <div class="fieldRow"><div class="k">Integrity</div><div class="v" id="lcIntegrity"></div></div>
+      <button class="menuBtn" id="btnLevelCompleteContinue" style="margin-top:18px">CONTINUE</button>
+    </div>
+  </div>
+</div>
+
+<div id="breachPanel" class="overlay hidden">
+  <div class="termFrame" style="width:460px">
+    <div class="termBar">
+      <div class="termDot" style="background:#c9515f"></div>
+      <div class="termDot" style="background:#d1a13f"></div>
+      <div class="termDot" style="background:#4fae6e"></div>
+      <span class="h">SYSTEM BREACHED</span>
+    </div>
+    <div class="panelBody">
+      <div class="resultTag wrong">SYSTEM BREACHED</div>
+      <div class="explain" id="breachExplain"></div>
+      <div class="fieldRow"><div class="k">Mission Reached</div><div class="v" id="breachMissionReached"></div></div>
+      <button class="menuBtn" id="btnBreachMenu" style="margin-top:18px">RETURN TO MENU</button>
+    </div>
+  </div>
+</div>
+
+<div id="finalIntroPanel" class="overlay hidden">
+  <div class="termFrame" style="width:500px">
+    <div class="termBar">
+      <div class="termDot" style="background:#c9515f"></div>
+      <div class="termDot" style="background:#d1a13f"></div>
+      <div class="termDot" style="background:#4fae6e"></div>
+      <span class="h">ZERO :: FINAL PROTOCOL</span>
+    </div>
+    <div class="panelBody">
+      <div class="resultTag wrong">ZERO INITIATES FINAL PROTOCOL</div>
+      <div class="explain" id="finalIntroText"></div>
+      <button class="menuBtn" id="btnFinalIntroContinue" style="margin-top:18px">BEGIN</button>
+    </div>
+  </div>
+</div>
+
+<div id="finalStagePanel" class="overlay hidden">
+  <div class="termFrame" style="width:440px">
+    <div class="termBar">
+      <div class="termDot" style="background:#c9515f"></div>
+      <div class="termDot" style="background:#d1a13f"></div>
+      <div class="termDot" style="background:#4fae6e"></div>
+      <span class="h" id="finalStageHead">STAGE 1 OF 3</span>
+    </div>
+    <div class="panelBody">
+      <div class="resultTag wrong" id="finalStageTag">THREAT INBOUND</div>
+      <button class="menuBtn" id="btnFinalStageContinue" style="margin-top:10px">PROCEED</button>
+    </div>
+  </div>
+</div>
+
+<div id="finalResultPanel" class="overlay hidden">
+  <div class="termFrame" style="width:500px">
+    <div class="termBar">
+      <div class="termDot" style="background:#c9515f"></div>
+      <div class="termDot" style="background:#d1a13f"></div>
+      <div class="termDot" style="background:#4fae6e"></div>
+      <span class="h">FINAL RESULT</span>
+    </div>
+    <div class="panelBody">
+      <div class="resultTag" id="finalResultTag">RESULT</div>
+      <div class="explain" id="finalResultExplain"></div>
+      <div class="fieldRow"><div class="k">Integrity</div><div class="v" id="finalResultIntegrity"></div></div>
+      <button class="menuBtn" id="btnFinalResultMenu" style="margin-top:18px">RETURN TO MENU</button>
+    </div>
+  </div>
+</div>
+
+<div id="pauseMenu" class="overlay hidden">
+  <div class="menuBox">
+    <div class="title" style="font-size:24px">PAUSED</div>
+    <button class="menuBtn" id="btnResume">RESUME</button>
+    <button class="menuBtn" id="btnRestartMission">RESTART MISSION</button>
+    <button class="menuBtn" id="btnPauseSettings">SETTINGS</button>
+    <button class="menuBtn" id="btnPauseLogs">MISSION LOGS</button>
+    <button class="menuBtn" id="btnQuitToMenu">QUIT TO MENU</button>
+  </div>
+</div>
+
+<div id="settingsPanel" class="overlay hidden">
+  <div class="termFrame" style="width:420px">
+    <div class="termBar">
+      <div class="termDot" style="background:#c9515f"></div>
+      <div class="termDot" style="background:#d1a13f"></div>
+      <div class="termDot" style="background:#4fae6e"></div>
+      <span class="h">SETTINGS</span>
+    </div>
+    <div class="panelBody">
+      <div class="srow"><span>Mouse Sensitivity</span><input type="range" id="sensSlider" min="1" max="10" step="1" value="5"></div>
+      <div class="srow"><span>Master Volume</span><input type="range" id="volMaster" min="0" max="100" step="1" value="80"></div>
+      <div class="srow"><span>Ambience Volume</span><input type="range" id="volAmbience" min="0" max="100" step="1" value="60"></div>
+      <div class="srow"><span>SFX Volume</span><input type="range" id="volSfx" min="0" max="100" step="1" value="85"></div>
+      <button class="menuBtn" id="btnCloseSettings" style="margin-top:18px">CLOSE</button>
+    </div>
+  </div>
+</div>
+
+<div id="missionLogPanel" class="overlay hidden">
+  <div class="termFrame" style="width:620px">
+    <div class="termBar">
+      <div class="termDot" style="background:#c9515f"></div>
+      <div class="termDot" style="background:#d1a13f"></div>
+      <div class="termDot" style="background:#4fae6e"></div>
+      <span class="h">MISSION LOGS</span>
+    </div>
+    <div class="panelBody" id="missionLogBody" style="max-height:56vh"></div>
+    <div class="panelBody" style="padding-top:0">
+      <button class="menuBtn" id="btnCloseMissionLog">CLOSE</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =========================================================================
+   MEMORY//LEAK — THREAT DATA
+   Seven threat families, each with investigation evidence sources and
+   defense actions. Each family carries two narrative archetypes; every
+   mission rolls an archetype plus a per-slot "deception" pass so evidence
+   composition is never fixed. See buildIncident() at the bottom.
+   ========================================================================= */
+
+const FAMILY_KEYS = [
+  'PHISHING', 'SOCIAL_ENGINEERING', 'CREDENTIAL_THEFT', 'MALWARE',
+  'NETWORK_INTRUSION', 'DATA_EXFILTRATION', 'RANSOMWARE'
+];
+
+const CATEGORY_OF = {
+  PHISHING: 'IDENTITY',
+  SOCIAL_ENGINEERING: 'IDENTITY',
+  CREDENTIAL_THEFT: 'IDENTITY',
+  MALWARE: 'ENDPOINT',
+  RANSOMWARE: 'ENDPOINT',
+  NETWORK_INTRUSION: 'NETWORK',
+  DATA_EXFILTRATION: 'NETWORK'
+};
+
+const CATEGORY_KEYS = ['IDENTITY', 'ENDPOINT', 'NETWORK'];
+
+const NOISE_TEMPLATES = [
+  'Telemetry for this angle is incomplete; no clear signal either way.',
+  'This indicator is inconclusive on its own without further correlation.',
+  'No historical baseline is available for comparison on this point.',
+  'This artifact looks routine and does not clearly point in any direction.',
+  'Only partial logs were captured for this angle of the incident.',
+  'The data here is ambiguous and open to more than one reading.'
+];
+
+const MISLEAD_TEMPLATES = [
+  'Superficially resembles cases usually closed with {DEF}, though context here is thin.',
+  'An unrelated prior incident on this system was closed using {DEF}; may not apply here.',
+  'A junior analyst\'s note suggests {DEF}, but no supporting reasoning is attached.',
+  'Pattern-matches a training scenario that was resolved with {DEF}, which may be a coincidence.'
+];
+
+function pickRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function noiseText() { return pickRandom(NOISE_TEMPLATES); }
+
+function misleadText(defLabel) {
+  return pickRandom(MISLEAD_TEMPLATES).replace('{DEF}', defLabel);
+}
+
+const THREATS = {
+
+  PHISHING: {
+    label: 'PHISHING',
+    investigations: [
+      { id: 'sender', label: 'INSPECT SENDER DOMAIN' },
+      { id: 'url', label: 'ANALYZE URL' },
+      { id: 'attachment', label: 'INSPECT ATTACHMENT / CONTEXT' }
+    ],
+    defenses: [
+      { id: 'report', label: 'REPORT' },
+      { id: 'block', label: 'BLOCK' },
+      { id: 'verify', label: 'VERIFY' }
+    ],
+    archetypes: [
+      {
+        id: 'typosquat', severity: 'MEDIUM',
+        summary: 'An inbound message impersonates a known vendor through a look-alike domain.',
+        correct: 'block', partial: ['report'],
+        clues: {
+          sender: { text: 'The sending domain differs from the vendor\'s real domain by a single swapped character.', supports: 'block', strong: true },
+          url: { text: 'The embedded link redirects through an unfamiliar chain to a credential capture page.', supports: 'block', strong: true },
+          attachment: { text: 'No attachment is present; the body pressures immediate action on an "overdue invoice."', supports: 'report', strong: false }
+        }
+      },
+      {
+        id: 'legit_migration', severity: 'LOW',
+        summary: 'A real vendor sent mail from a new but properly authenticated subdomain after a platform migration.',
+        correct: 'verify', partial: ['report'],
+        clues: {
+          sender: { text: 'The domain is unfamiliar, but SPF/DKIM checks resolve cleanly to the vendor\'s known mail provider.', supports: 'verify', strong: true },
+          url: { text: 'The link points to a certificate-valid page on the vendor\'s real root domain.', supports: 'verify', strong: true },
+          attachment: { text: 'The attachment is a macro-enabled spreadsheet, unusual for prior correspondence with this sender.', supports: 'block', strong: false }
+        }
+      }
+    ]
+  },
+
+  SOCIAL_ENGINEERING: {
+    label: 'SOCIAL ENGINEERING',
+    investigations: [
+      { id: 'assess', label: 'ASSESS IMPERSONATION' },
+      { id: 'request', label: 'ANALYZE REQUEST' },
+      { id: 'identity', label: 'VERIFY IDENTITY / CONTEXT' }
+    ],
+    defenses: [
+      { id: 'verify_identity', label: 'VERIFY IDENTITY' },
+      { id: 'refuse', label: 'REFUSE REQUEST' },
+      { id: 'escalate', label: 'ESCALATE / REPORT' }
+    ],
+    archetypes: [
+      {
+        id: 'vendor_callback_scam', severity: 'HIGH',
+        summary: 'A caller impersonating internal IT support pressures an analyst for a one-time access code.',
+        correct: 'escalate', partial: ['refuse'],
+        clues: {
+          assess: { text: 'The caller uses urgency and authority cues typical of pretext calls; caller ID matches an internal format but cannot be verified.', supports: 'escalate', strong: true },
+          request: { text: 'The caller asks the target to read back a one-time MFA code "to fix a stuck ticket."', supports: 'refuse', strong: true },
+          identity: { text: 'No matching ticket number exists in the helpdesk system for this caller\'s claim.', supports: 'escalate', strong: true }
+        }
+      },
+      {
+        id: 'internal_reference_check', severity: 'LOW',
+        summary: 'A recently-hired, real employee requests folder access over an unusual personal channel.',
+        correct: 'verify_identity', partial: ['escalate'],
+        clues: {
+          assess: { text: 'Tone and project references match the requester\'s known role, but the channel is atypical for a work request.', supports: 'verify_identity', strong: true },
+          request: { text: 'The request is for read access to a folder consistent with the requester\'s current assignment.', supports: 'verify_identity', strong: false },
+          identity: { text: 'A directory lookup confirms the requester is an active employee with no prior incident history.', supports: 'verify_identity', strong: true }
+        }
+      }
+    ]
+  },
+
+  CREDENTIAL_THEFT: {
+    label: 'CREDENTIAL THEFT',
+    investigations: [
+      { id: 'timing', label: 'LOGIN TIMING' },
+      { id: 'mfa', label: 'MFA STATUS' },
+      { id: 'device', label: 'DEVICE FINGERPRINT' }
+    ],
+    defenses: [
+      { id: 'force_mfa', label: 'FORCE MFA' },
+      { id: 'reset_password', label: 'RESET PASSWORD' },
+      { id: 'revoke_session', label: 'REVOKE SESSION' },
+      { id: 'lock_account', label: 'LOCK ACCOUNT' }
+    ],
+    archetypes: [
+      {
+        id: 'session_hijack', severity: 'HIGH',
+        summary: 'An active session was established from an unrecognized region using a stale trusted-device token.',
+        correct: 'revoke_session', partial: ['lock_account', 'force_mfa'],
+        clues: {
+          timing: { text: 'A login succeeded from a new geographic region minutes ago; the session remains active right now.', supports: 'revoke_session', strong: true },
+          mfa: { text: 'MFA was satisfied using a previously-trusted device token that should already have expired.', supports: 'revoke_session', strong: true },
+          device: { text: 'The device fingerprint does not match any of this user\'s last twenty logins.', supports: 'lock_account', strong: false }
+        }
+      },
+      {
+        id: 'false_positive_travel', severity: 'LOW',
+        summary: 'A flagged login matches the employee\'s approved travel calendar.',
+        correct: 'force_mfa', partial: ['revoke_session'],
+        clues: {
+          timing: { text: 'The login originates from a country on the employee\'s approved travel calendar during their local business hours.', supports: 'force_mfa', strong: true },
+          mfa: { text: 'MFA was satisfied via push approval on the employee\'s already-enrolled device.', supports: 'force_mfa', strong: true },
+          device: { text: 'The device fingerprint matches the employee\'s known laptop from a new IP range.', supports: 'force_mfa', strong: false }
+        }
+      }
+    ]
+  },
+
+  MALWARE: {
+    label: 'MALWARE',
+    investigations: [
+      { id: 'process', label: 'PROCESS NAME' },
+      { id: 'network', label: 'NETWORK CONNECTION' },
+      { id: 'origin', label: 'PROCESS ORIGIN' }
+    ],
+    defenses: [
+      { id: 'scan', label: 'SCAN' },
+      { id: 'isolate', label: 'ISOLATE' },
+      { id: 'remove', label: 'REMOVE' },
+      { id: 'reimage', label: 'REIMAGE' }
+    ],
+    archetypes: [
+      {
+        id: 'commodity_trojan', severity: 'MEDIUM',
+        summary: 'A well-characterized credential-stealing trojan is running on a single host.',
+        correct: 'remove', partial: ['isolate', 'scan'],
+        clues: {
+          process: { text: 'The process matches a known signature for a commodity credential-stealing trojan.', supports: 'remove', strong: true },
+          network: { text: 'An outbound beacon contacts a single known-bad address at fixed intervals; no lateral movement is visible.', supports: 'remove', strong: true },
+          origin: { text: 'It was delivered by a malicious email attachment opened twelve minutes ago.', supports: 'isolate', strong: false }
+        }
+      },
+      {
+        id: 'unknown_persistence', severity: 'HIGH',
+        summary: 'An unidentified process keeps re-establishing itself with signs of deep persistence.',
+        correct: 'reimage', partial: ['isolate', 'remove'],
+        clues: {
+          process: { text: 'The process respawns under a new PID immediately after every termination attempt.', supports: 'reimage', strong: true },
+          network: { text: 'Multiple outbound connections reach rotating, previously-unseen domains.', supports: 'reimage', strong: true },
+          origin: { text: 'Origin cannot be conclusively traced; artifacts suggest modified system binaries.', supports: 'reimage', strong: false }
+        }
+      }
+    ]
+  },
+
+  NETWORK_INTRUSION: {
+    label: 'NETWORK INTRUSION',
+    investigations: [
+      { id: 'traffic', label: 'ANALYZE TRAFFIC' },
+      { id: 'srcdst', label: 'INSPECT SOURCE / DESTINATION' },
+      { id: 'ports', label: 'CHECK PORTS' },
+      { id: 'abnormal', label: 'EXAMINE ABNORMAL BEHAVIOR' }
+    ],
+    defenses: [
+      { id: 'monitor', label: 'MONITOR' },
+      { id: 'firewall', label: 'FIREWALL' },
+      { id: 'block', label: 'BLOCK' },
+      { id: 'segment', label: 'SEGMENT / ISOLATE' }
+    ],
+    archetypes: [
+      {
+        id: 'recon_scan', severity: 'LOW',
+        summary: 'A wide, shallow scan sweeps the network from an external address.',
+        correct: 'monitor', partial: ['firewall'],
+        clues: {
+          traffic: { text: 'The traffic pattern shows sequential port probing typical of automated reconnaissance.', supports: 'monitor', strong: true },
+          srcdst: { text: 'The source is external; the sweep covers a wide range of internal hosts without settling on one.', supports: 'monitor', strong: false },
+          ports: { text: 'Only common service ports are being probed; no successful handshake has been recorded.', supports: 'monitor', strong: true },
+          abnormal: { text: 'No data has left the network; behavior is consistent with mapping, not exploitation.', supports: 'monitor', strong: false }
+        }
+      },
+      {
+        id: 'active_breach', severity: 'HIGH',
+        summary: 'An established session is moving between internal subnets that should never communicate.',
+        correct: 'segment', partial: ['block', 'firewall'],
+        clues: {
+          traffic: { text: 'An established session is moving between internal subnets that have no legitimate reason to talk.', supports: 'segment', strong: true },
+          srcdst: { text: 'An internal host is reaching out to sensitive infrastructure it has never contacted before.', supports: 'segment', strong: true },
+          ports: { text: 'Non-standard ports are carrying what looks like command-and-control traffic.', supports: 'block', strong: false },
+          abnormal: { text: 'The volume and timing of the traffic spike sharply outside business hours.', supports: 'segment', strong: false }
+        }
+      }
+    ]
+  },
+
+  DATA_EXFILTRATION: {
+    label: 'DATA EXFILTRATION',
+    investigations: [
+      { id: 'sensitive', label: 'IDENTIFY SENSITIVE DATA' },
+      { id: 'access', label: 'ANALYZE ACCESS' },
+      { id: 'destination', label: 'DETERMINE DESTINATION' },
+      { id: 'transfer', label: 'ANALYZE TRANSFER BEHAVIOR' }
+    ],
+    defenses: [
+      { id: 'access_control', label: 'ACCESS CONTROL' },
+      { id: 'contain', label: 'CONTAIN' },
+      { id: 'revoke_access', label: 'REVOKE ACCESS' },
+      { id: 'block_transfer', label: 'BLOCK TRANSFER' }
+    ],
+    archetypes: [
+      {
+        id: 'insider_bulk_download', severity: 'HIGH',
+        summary: 'A valid employee account is pulling an unusual volume of restricted records.',
+        correct: 'revoke_access', partial: ['contain', 'block_transfer'],
+        clues: {
+          sensitive: { text: 'The files being accessed are customer records classified as restricted.', supports: 'revoke_access', strong: true },
+          access: { text: 'Access originates from a valid employee account with legitimate baseline permissions.', supports: 'revoke_access', strong: true },
+          destination: { text: 'Files are being copied to a personal cloud storage endpoint.', supports: 'block_transfer', strong: false },
+          transfer: { text: 'This hour\'s download volume already exceeds the user\'s typical monthly total.', supports: 'revoke_access', strong: false }
+        }
+      },
+      {
+        id: 'external_beacon_leak', severity: 'MEDIUM',
+        summary: 'An automated process is quietly staging internal documents to an unfamiliar external domain.',
+        correct: 'block_transfer', partial: ['contain'],
+        clues: {
+          sensitive: { text: 'The staged data is internal engineering documentation, not customer records.', supports: 'block_transfer', strong: false },
+          access: { text: 'The access pattern matches an automated process rather than an interactive human session.', supports: 'block_transfer', strong: true },
+          destination: { text: 'The destination is a newly-registered external domain with no business relationship.', supports: 'block_transfer', strong: true },
+          transfer: { text: 'The transfer occurs in small, evenly-timed chunks consistent with beaconing.', supports: 'contain', strong: false }
+        }
+      }
+    ]
+  },
+
+  RANSOMWARE: {
+    label: 'RANSOMWARE',
+    investigations: [
+      { id: 'endpoint', label: 'IDENTIFY AFFECTED ENDPOINT' },
+      { id: 'encryption', label: 'ANALYZE ENCRYPTION ACTIVITY' },
+      { id: 'lateral', label: 'CHECK LATERAL SPREAD' },
+      { id: 'critical', label: 'IDENTIFY CRITICAL SYSTEMS' }
+    ],
+    defenses: [
+      { id: 'isolate', label: 'ISOLATE' },
+      { id: 'contain', label: 'CONTAIN' },
+      { id: 'recover', label: 'RECOVER' },
+      { id: 'restore_backup', label: 'RESTORE BACKUP' }
+    ],
+    archetypes: [
+      {
+        id: 'single_endpoint_early', severity: 'MEDIUM',
+        summary: 'Encryption activity is confined to a single workstation, caught within minutes.',
+        correct: 'isolate', partial: ['contain'],
+        clues: {
+          endpoint: { text: 'Encryption activity is confined to a single workstation, first flagged within the last five minutes.', supports: 'isolate', strong: true },
+          encryption: { text: 'The file-modification rate on that host is spiking but has not reached shared drives yet.', supports: 'isolate', strong: true },
+          lateral: { text: 'No lateral-movement indicators have appeared on adjacent hosts.', supports: 'isolate', strong: false },
+          critical: { text: 'No critical infrastructure sits on the affected host\'s network segment.', supports: 'isolate', strong: false }
+        }
+      },
+      {
+        id: 'spread_to_shares', severity: 'HIGH',
+        summary: 'Encryption has already crossed onto shared network drives across two departments.',
+        correct: 'contain', partial: ['isolate', 'restore_backup'],
+        clues: {
+          endpoint: { text: 'Multiple endpoints across two departments already show encrypted file extensions.', supports: 'contain', strong: true },
+          encryption: { text: 'Shared network drives show active mass file-renaming consistent with encryption in progress.', supports: 'contain', strong: true },
+          lateral: { text: 'The spread pattern indicates use of an internal admin credential to reach new hosts.', supports: 'contain', strong: false },
+          critical: { text: 'A backup server on the same segment has not yet been reached but sits at risk.', supports: 'restore_backup', strong: false }
+        }
+      }
+    ]
+  }
+};
+
+/* Six difficulty levels. Pools accumulate; nothing is ever removed. */
+const LEVELS = [
+  { id: 'BEGINNER', label: 'BEGINNER', pool: ['PHISHING', 'SOCIAL_ENGINEERING', 'CREDENTIAL_THEFT', 'MALWARE'], deception: 0.08, investigationDemand: 0 },
+  { id: 'EASY', label: 'EASY', pool: ['PHISHING', 'SOCIAL_ENGINEERING', 'CREDENTIAL_THEFT', 'MALWARE', 'NETWORK_INTRUSION'], deception: 0.16, investigationDemand: 0 },
+  { id: 'MEDIUM', label: 'MEDIUM', pool: ['PHISHING', 'SOCIAL_ENGINEERING', 'CREDENTIAL_THEFT', 'MALWARE', 'NETWORK_INTRUSION', 'DATA_EXFILTRATION'], deception: 0.26, investigationDemand: 1 },
+  { id: 'HARD', label: 'HARD', pool: ['PHISHING', 'SOCIAL_ENGINEERING', 'CREDENTIAL_THEFT', 'MALWARE', 'NETWORK_INTRUSION', 'DATA_EXFILTRATION', 'RANSOMWARE'], deception: 0.36, investigationDemand: 1 },
+  { id: 'PRO', label: 'PRO', pool: ['PHISHING', 'SOCIAL_ENGINEERING', 'CREDENTIAL_THEFT', 'MALWARE', 'NETWORK_INTRUSION', 'DATA_EXFILTRATION', 'RANSOMWARE'], deception: 0.48, investigationDemand: 1 },
+  { id: 'IMPOSSIBLE', label: 'IMPOSSIBLE', pool: ['PHISHING', 'SOCIAL_ENGINEERING', 'CREDENTIAL_THEFT', 'MALWARE', 'NETWORK_INTRUSION', 'DATA_EXFILTRATION', 'RANSOMWARE'], deception: 0.6, investigationDemand: 2 }
+];
+
+const MISSIONS_PER_LEVEL = 5;
+const TOTAL_NORMAL_MISSIONS = LEVELS.length * MISSIONS_PER_LEVEL;
+
+/**
+ * Build one incident instance for a given family at a given level.
+ * Evidence composition is rolled per-slot so no fixed clue ratio ever
+ * appears: each slot independently comes back strong/weak (true to the
+ * archetype), irrelevant noise, or actively misleading, weighted by the
+ * level's deception factor.
+ */
+function buildIncident(familyKey, levelDef) {
+  const fam = THREATS[familyKey];
+  const archetype = pickRandom(fam.archetypes);
+  const deception = levelDef.deception;
+  const allDefenseIds = fam.defenses.map(function (d) { return d.id; });
+
+  const evidence = fam.investigations.map(function (inv) {
+    const clue = archetype.clues[inv.id];
+    const roll = Math.random();
+    let quality, text, supports;
+    if (roll < deception * 0.4) {
+      quality = 'misleading';
+      const wrongIds = allDefenseIds.filter(function (id) { return id !== archetype.correct; });
+      const chosenWrong = wrongIds.length ? pickRandom(wrongIds) : archetype.correct;
+      const defObj = fam.defenses.find(function (d) { return d.id === chosenWrong; });
+      supports = chosenWrong;
+      text = misleadText(defObj ? defObj.label : chosenWrong);
+    } else if (roll < deception) {
+      quality = 'irrelevant';
+      text = noiseText();
+      supports = null;
+    } else {
+      quality = clue.strong ? 'strong' : 'weak';
+      text = clue.text;
+      supports = clue.supports;
+    }
+    return { id: inv.id, label: inv.label, quality: quality, text: text, supports: supports, revealed: false };
+  });
+
+  const baseMin = Math.ceil(fam.investigations.length / 2);
+  const minInvestigation = Math.min(fam.investigations.length, baseMin + (levelDef.investigationDemand || 0));
+
+  return {
+    family: familyKey,
+    familyLabel: fam.label,
+    archetypeId: archetype.id,
+    summary: archetype.summary,
+    severity: archetype.severity,
+    correctDefense: archetype.correct,
+    partialDefenses: archetype.partial.slice(),
+    defenses: fam.defenses,
+    evidence: evidence,
+    minInvestigation: minInvestigation,
+    createdAt: 0,
+    resolved: false
+  };
+}
+
+/**
+ * Contextual outcome evaluation. The same defense id can be correct in
+ * one archetype and merely partial (or absent, i.e. wrong) in another,
+ * because correctDefense/partialDefenses come from the rolled archetype,
+ * not from a fixed per-family table.
+ */
+function evaluateDefense(incident, chosenDefenseId, investigatedIds) {
+  const investigatedCount = investigatedIds.size;
+  const supportingCorrectFound = incident.evidence.some(function (e) {
+    return investigatedIds.has(e.id) && e.supports === incident.correctDefense && e.quality !== 'irrelevant';
+  });
+  if (chosenDefenseId === incident.correctDefense) {
+    const enough = investigatedCount >= incident.minInvestigation && supportingCorrectFound;
+    return enough ? 'CORRECT' : 'PARTIAL';
+  }
+  if (incident.partialDefenses.indexOf(chosenDefenseId) !== -1) {
+    return 'PARTIAL';
+  }
+  return 'WRONG';
+}
+
+function randRange(min, max) { return min + Math.random() * (max - min); }
+
+function integrityLoss(outcome, severity, levelIndex) {
+  const bands = { CORRECT: [0, 3], PARTIAL: [7, 16], WRONG: [17, 31] };
+  const band = bands[outcome] || bands.WRONG;
+  let loss = randRange(band[0], band[1]);
+  const sevMult = { LOW: 0.8, MEDIUM: 1.0, HIGH: 1.25 }[severity] || 1.0;
+  loss *= sevMult;
+  loss *= (1 + levelIndex * 0.045);
+  return Math.round(loss);
+}
+
+function missionResultLabel(outcome) {
+  return { CORRECT: 'SECURED', PARTIAL: 'CONTAINED', WRONG: 'BREACHED' }[outcome] || 'BREACHED';
+}
+/* =========================================================================
+   MEMORY//LEAK — ZERO BEHAVIOURAL AI
+   Tracks player behaviour (family outcomes, category performance, evidence
+   neglect, defense over-reliance, response timing) and recomputes weighted
+   probabilities for the next threat selection. Weights are never allowed to
+   reach zero, so no family is ever excluded and no attack is ever
+   guaranteed — only made more or less likely.
+   ========================================================================= */
+
+function initZeroState() {
+  const categoryStats = {};
+  CATEGORY_KEYS.forEach(function (c) { categoryStats[c] = { attempts: 0, correct: 0 }; });
+  return {
+    weights: {},
+    stats: {},
+    categoryStats: categoryStats,
+    evidenceSeen: {},
+    defenseUsage: {},
+    defenseSuccess: {},
+    timingTotal: {},
+    timingCount: {},
+    state: 'OBSERVING',
+    notes: []
+  };
+}
+
+function zeroEnsureFamily(z, fam) {
+  if (!(fam in z.weights)) z.weights[fam] = 1;
+  if (!(fam in z.stats)) z.stats[fam] = { attempts: 0, correct: 0, partial: 0, wrong: 0 };
+}
+
+/**
+ * Recompute per-family selection weights for the given pool, based on
+ * accumulated stats. Returns the weights object (also stored on z).
+ */
+function zeroRecomputeWeights(z, pool) {
+  pool.forEach(function (f) { zeroEnsureFamily(z, f); });
+  const w = {};
+  pool.forEach(function (f) { w[f] = 1; });
+  const notes = [];
+
+  // 1) Category pressure: mastery in one category shifts pressure elsewhere.
+  CATEGORY_KEYS.forEach(function (cat) {
+    const s = z.categoryStats[cat];
+    if (s.attempts >= 2) {
+      const rate = s.correct / s.attempts;
+      const famsIn = pool.filter(function (f) { return CATEGORY_OF[f] === cat; });
+      const famsOut = pool.filter(function (f) { return CATEGORY_OF[f] !== cat; });
+      if (rate > 0.7 && famsOut.length) {
+        famsOut.forEach(function (f) { w[f] *= 1.35; });
+        famsIn.forEach(function (f) { w[f] *= 0.85; });
+        notes.push('sustained ' + cat.toLowerCase() + ' proficiency detected — pressure shifting to other vectors');
+      } else if (rate < 0.35) {
+        famsIn.forEach(function (f) { w[f] *= 1.2; });
+        notes.push(cat.toLowerCase() + ' vector performance is weak — reinforcing pressure there');
+      }
+    }
+  });
+
+  // 2) Evidence neglect: investigation slots the player rarely opens make
+  //    their owning families more likely, so blind spots get tested.
+  Object.keys(z.evidenceSeen).forEach(function (id) {
+    const e = z.evidenceSeen[id];
+    if (e.shown >= 3 && (e.investigated / e.shown) < 0.35) {
+      const owners = pool.filter(function (f) {
+        return THREATS[f].investigations.some(function (i) { return i.id === id; });
+      });
+      owners.forEach(function (f) { w[f] *= 1.18; });
+      if (owners.length) notes.push('a neglected evidence pattern is being exploited more often');
+    }
+  });
+
+  // 3) Defense over-reliance: a single hammer used on every nail invites
+  //    scenarios where that action is insufficient.
+  const totalDef = Object.keys(z.defenseUsage).reduce(function (a, k) { return a + z.defenseUsage[k]; }, 0);
+  if (totalDef >= 4) {
+    let maxId = null, maxC = 0;
+    Object.keys(z.defenseUsage).forEach(function (id) {
+      if (z.defenseUsage[id] > maxC) { maxC = z.defenseUsage[id]; maxId = id; }
+    });
+    if (maxId && (maxC / totalDef) > 0.4) {
+      pool.forEach(function (f) {
+        const fam = THREATS[f];
+        const isViableHere = fam.archetypes.some(function (a) {
+          return a.correct === maxId || a.partial.indexOf(maxId) !== -1;
+        });
+        if (!isViableHere) w[f] *= 1.15;
+      });
+      notes.push('repeated reliance on a single defensive action is being probed');
+    }
+  }
+
+  // Floor + normalize so every unlocked family always keeps a real chance.
+  const keys = Object.keys(w);
+  const floor = 0.4;
+  keys.forEach(function (k) { if (w[k] < floor) w[k] = floor; });
+  const sum = keys.reduce(function (a, k) { return a + w[k]; }, 0);
+  keys.forEach(function (k) { z.weights[k] = w[k] / sum; });
+
+  z.notes = notes;
+  return z.weights;
+}
+
+function zeroWeightedPick(weights, pool) {
+  const entries = pool.map(function (f) { return [f, weights[f] || 1]; });
+  const total = entries.reduce(function (a, e) { return a + e[1]; }, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < entries.length; i++) {
+    if (r < entries[i][1]) return entries[i][0];
+    r -= entries[i][1];
+  }
+  return entries[entries.length - 1][0];
+}
+
+/**
+ * Record the outcome of a resolved incident into ZERO's behavioural model.
+ * investigatedIds: Set of investigation ids the player actually opened.
+ * responseSeconds: time from alert to resolution (for timing stats).
+ */
+function zeroRecordOutcome(z, incident, chosenDefenseId, investigatedIds, outcome, responseSeconds) {
+  const fam = incident.family;
+  zeroEnsureFamily(z, fam);
+  z.stats[fam].attempts++;
+  z.stats[fam][outcome.toLowerCase()]++;
+
+  const cat = CATEGORY_OF[fam];
+  z.categoryStats[cat].attempts++;
+  if (outcome === 'CORRECT') z.categoryStats[cat].correct++;
+
+  incident.evidence.forEach(function (e) {
+    if (!z.evidenceSeen[e.id]) z.evidenceSeen[e.id] = { shown: 0, investigated: 0 };
+    z.evidenceSeen[e.id].shown++;
+    if (investigatedIds.has(e.id)) z.evidenceSeen[e.id].investigated++;
+  });
+
+  z.defenseUsage[chosenDefenseId] = (z.defenseUsage[chosenDefenseId] || 0) + 1;
+  if (outcome === 'CORRECT') z.defenseSuccess[chosenDefenseId] = (z.defenseSuccess[chosenDefenseId] || 0) + 1;
+
+  if (typeof responseSeconds === 'number' && isFinite(responseSeconds)) {
+    z.timingTotal[fam] = (z.timingTotal[fam] || 0) + responseSeconds;
+    z.timingCount[fam] = (z.timingCount[fam] || 0) + 1;
+  }
+}
+
+function zeroWeakestCategory(z) {
+  let worst = null, worstRate = 2;
+  CATEGORY_KEYS.forEach(function (cat) {
+    const s = z.categoryStats[cat];
+    const rate = s.attempts ? (s.correct / s.attempts) : 0.5;
+    if (s.attempts > 0 && rate < worstRate) { worstRate = rate; worst = cat; }
+  });
+  return worst;
+}
+
+function zeroBehaviourNote(z) {
+  if (!z.notes || !z.notes.length) return 'ZERO: no significant behavioural shift detected this cycle.';
+  return 'ZERO: ' + z.notes[0].charAt(0).toUpperCase() + z.notes[0].slice(1) + '.';
+}
+/* =========================================================================
+   MEMORY//LEAK — SAVE SYSTEM
+   Versioned localStorage persistence. Autosave happens at mission
+   boundaries (never mid-incident), at level completion, and whenever
+   settings change.
+   ========================================================================= */
+
+const SAVE_KEY = 'memoryleak_save_v1';
+const SAVE_VERSION = 1;
+
+function defaultLevelStats() {
+  return LEVELS.map(function () {
+    return { completed: false, bestIntegrity: null, correct: 0, partial: 0, wrong: 0 };
+  });
+}
+
+function defaultSave() {
+  return {
+    version: SAVE_VERSION,
+    settings: {
+      mouseSensitivity: 0.0022,
+      masterVolume: 0.8,
+      ambienceVolume: 0.6,
+      sfxVolume: 0.85
+    },
+    run: {
+      active: false,
+      levelIndex: 0,
+      missionInLevel: 0,
+      overallMissionNumber: 0,
+      integrity: 100,
+      unlockedLevels: LEVELS.map(function (l, i) { return i === 0; }),
+      levelStats: defaultLevelStats(),
+      zero: initZeroState(),
+      missionLog: [],
+      finalAttempted: false,
+      finalResult: null
+    },
+    lifetime: {
+      totalRuns: 0,
+      bestOverallMissionReached: 0,
+      breaches: 0,
+      completions: 0
+    }
+  };
+}
+
+function safeStorageGet(key) {
+  try { return window.localStorage.getItem(key); } catch (e) { return null; }
+}
+
+function safeStorageSet(key, value) {
+  try { window.localStorage.setItem(key, value); return true; } catch (e) { return false; }
+}
+
+function loadSave() {
+  const raw = safeStorageGet(SAVE_KEY);
+  if (!raw) return defaultSave();
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== SAVE_VERSION || !parsed.run || !parsed.settings) return defaultSave();
+    const fresh = defaultSave();
+    // Shallow-merge to tolerate a partially-shaped save without crashing.
+    fresh.settings = Object.assign({}, fresh.settings, parsed.settings);
+    fresh.run = Object.assign({}, fresh.run, parsed.run);
+    if (!fresh.run.zero || !fresh.run.zero.weights) fresh.run.zero = initZeroState();
+    if (!Array.isArray(fresh.run.levelStats) || fresh.run.levelStats.length !== LEVELS.length) fresh.run.levelStats = defaultLevelStats();
+    if (!Array.isArray(fresh.run.unlockedLevels) || fresh.run.unlockedLevels.length !== LEVELS.length) fresh.run.unlockedLevels = LEVELS.map(function (l, i) { return i === 0; });
+    if (!Array.isArray(fresh.run.missionLog)) fresh.run.missionLog = [];
+    fresh.lifetime = Object.assign({}, fresh.lifetime, parsed.lifetime);
+    return fresh;
+  } catch (e) {
+    return defaultSave();
+  }
+}
+
+function writeSave(save) {
+  save.version = SAVE_VERSION;
+  return safeStorageSet(SAVE_KEY, JSON.stringify(save));
+}
+/* =========================================================================
+   MEMORY//LEAK — SYNTHESIZED AUDIO ENGINE
+   Everything here is generated with the WebAudio API. No external audio
+   assets are loaded. AudioSys.init() must be called from within a user
+   gesture (a click) before any sound will actually play, per browser
+   autoplay policy.
+   ========================================================================= */
+
+const AudioSys = (function () {
+  let ctx = null;
+  let masterGain = null;
+  let ambienceGain = null;
+  let sfxGain = null;
+  let alertNodes = null;
+  let ambienceNodes = null;
+  let noiseBuffer = null;
+  let volumes = { master: 0.8, ambience: 0.6, sfx: 0.85 };
+  let keyboardTimer = null;
+
+  function ensureCtx() {
+    if (ctx) return ctx;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    ctx = new Ctx();
+    masterGain = ctx.createGain();
+    masterGain.gain.value = volumes.master;
+    masterGain.connect(ctx.destination);
+
+    ambienceGain = ctx.createGain();
+    ambienceGain.gain.value = volumes.ambience;
+    ambienceGain.connect(masterGain);
+
+    sfxGain = ctx.createGain();
+    sfxGain.gain.value = volumes.sfx;
+    sfxGain.connect(masterGain);
+
+    noiseBuffer = buildNoiseBuffer();
+    return ctx;
+  }
+
+  function buildNoiseBuffer() {
+    const len = ctx.sampleRate * 2;
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+
+  function init() {
+    ensureCtx();
+    if (ctx && ctx.state === 'suspended') ctx.resume();
+  }
+
+  function setVolumes(master, ambience, sfx) {
+    volumes.master = master; volumes.ambience = ambience; volumes.sfx = sfx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    masterGain.gain.setTargetAtTime(master, t, 0.05);
+    ambienceGain.gain.setTargetAtTime(ambience, t, 0.05);
+    sfxGain.gain.setTargetAtTime(sfx, t, 0.05);
+  }
+
+  function tone(opts) {
+    if (!ctx) return;
+    const t0 = ctx.currentTime + (opts.delay || 0);
+    const osc = ctx.createOscillator();
+    osc.type = opts.type || 'sine';
+    osc.frequency.setValueAtTime(opts.freq, t0);
+    if (opts.freqEnd) osc.frequency.exponentialRampToValueAtTime(Math.max(1, opts.freqEnd), t0 + (opts.dur || 0.2));
+    const g = ctx.createGain();
+    const peak = opts.gain != null ? opts.gain : 0.25;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(peak, t0 + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + (opts.dur || 0.2));
+    osc.connect(g);
+    g.connect(sfxGain);
+    osc.start(t0);
+    osc.stop(t0 + (opts.dur || 0.2) + 0.05);
+  }
+
+  function noiseBurst(opts) {
+    if (!ctx || !noiseBuffer) return;
+    const t0 = ctx.currentTime + (opts.delay || 0);
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuffer;
+    const filt = ctx.createBiquadFilter();
+    filt.type = opts.filterType || 'bandpass';
+    filt.frequency.value = opts.freq || 1200;
+    filt.Q.value = opts.q || 1.2;
+    const g = ctx.createGain();
+    const peak = opts.gain != null ? opts.gain : 0.15;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(peak, t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + (opts.dur || 0.1));
+    src.connect(filt); filt.connect(g); g.connect(sfxGain);
+    src.start(t0);
+    src.stop(t0 + (opts.dur || 0.1) + 0.05);
+  }
+
+  function startAmbience() {
+    if (!ctx || ambienceNodes) return;
+    const hum1 = ctx.createOscillator(); hum1.type = 'sine'; hum1.frequency.value = 55;
+    const hum2 = ctx.createOscillator(); hum2.type = 'sine'; hum2.frequency.value = 58.5;
+    const humGain = ctx.createGain(); humGain.gain.value = 0.05;
+    hum1.connect(humGain); hum2.connect(humGain); humGain.connect(ambienceGain);
+    hum1.start(); hum2.start();
+
+    const hiss = ctx.createBufferSource();
+    hiss.buffer = noiseBuffer; hiss.loop = true;
+    const hissFilt = ctx.createBiquadFilter();
+    hissFilt.type = 'lowpass'; hissFilt.frequency.value = 420;
+    const hissGain = ctx.createGain(); hissGain.gain.value = 0.035;
+    hiss.connect(hissFilt); hissFilt.connect(hissGain); hissGain.connect(ambienceGain);
+    hiss.start();
+
+    ambienceNodes = { hum1: hum1, hum2: hum2, hiss: hiss, humGain: humGain, hissGain: hissGain };
+    scheduleKeyboardAmbience();
+  }
+
+  function stopAmbience() {
+    if (!ambienceNodes) return;
+    try {
+      ambienceNodes.hum1.stop(); ambienceNodes.hum2.stop(); ambienceNodes.hiss.stop();
+    } catch (e) { /* already stopped */ }
+    ambienceNodes = null;
+    if (keyboardTimer) { clearTimeout(keyboardTimer); keyboardTimer = null; }
+  }
+
+  function scheduleKeyboardAmbience() {
+    if (!ambienceNodes) return;
+    const delay = 900 + Math.random() * 2600;
+    keyboardTimer = setTimeout(function () {
+      if (!ambienceNodes) return;
+      const clicks = 1 + Math.floor(Math.random() * 4);
+      for (let i = 0; i < clicks; i++) {
+        noiseBurst({ delay: i * 0.06, freq: 2400 + Math.random() * 1400, q: 3, dur: 0.03, gain: 0.02, filterType: 'bandpass' });
+      }
+      scheduleKeyboardAmbience();
+    }, delay);
+  }
+
+  function startAlert() {
+    if (!ctx || alertNodes) return;
+    const g = ctx.createGain(); g.gain.value = 0.0001; g.connect(sfxGain);
+    let toggle = true;
+    function beep() {
+      if (!alertNodes) return;
+      const t0 = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = toggle ? 880 : 660;
+      toggle = !toggle;
+      const bg = ctx.createGain();
+      bg.gain.setValueAtTime(0.0001, t0);
+      bg.gain.exponentialRampToValueAtTime(0.16, t0 + 0.02);
+      bg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.32);
+      osc.connect(bg); bg.connect(sfxGain);
+      osc.start(t0); osc.stop(t0 + 0.36);
+      alertNodes.timer = setTimeout(beep, 620);
+    }
+    alertNodes = { gain: g, timer: null };
+    beep();
+  }
+
+  function stopAlert() {
+    if (!alertNodes) return;
+    if (alertNodes.timer) clearTimeout(alertNodes.timer);
+    alertNodes = null;
+  }
+
+  function playClick() { noiseBurst({ freq: 1800, q: 2.2, dur: 0.045, gain: 0.14 }); }
+  function playHover() { tone({ type: 'sine', freq: 720, dur: 0.05, gain: 0.04 }); }
+  function playInvestigate() { tone({ type: 'triangle', freq: 420, freqEnd: 640, dur: 0.16, gain: 0.16 }); }
+
+  function playCorrect() {
+    tone({ type: 'sine', freq: 523.25, dur: 0.14, gain: 0.2 });
+    tone({ type: 'sine', freq: 659.25, dur: 0.14, gain: 0.2, delay: 0.09 });
+    tone({ type: 'sine', freq: 783.99, dur: 0.22, gain: 0.22, delay: 0.18 });
+  }
+
+  function playPartial() {
+    tone({ type: 'triangle', freq: 440, dur: 0.18, gain: 0.18 });
+    tone({ type: 'triangle', freq: 415, dur: 0.22, gain: 0.16, delay: 0.14 });
+  }
+
+  function playWrong() {
+    tone({ type: 'sawtooth', freq: 260, freqEnd: 90, dur: 0.4, gain: 0.22 });
+    noiseBurst({ freq: 300, q: 0.8, dur: 0.3, gain: 0.1, filterType: 'lowpass' });
+  }
+
+  function playLevelComplete() {
+    [523.25, 659.25, 783.99, 1046.5].forEach(function (f, i) {
+      tone({ type: 'sine', freq: f, dur: 0.24, gain: 0.2, delay: i * 0.14 });
+    });
+  }
+
+  function playBreach() {
+    tone({ type: 'sawtooth', freq: 180, freqEnd: 45, dur: 1.1, gain: 0.26 });
+    tone({ type: 'square', freq: 90, dur: 1.2, gain: 0.1, delay: 0.08 });
+  }
+
+  function playFinalResult(victory) {
+    if (victory) {
+      [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach(function (f, i) {
+        tone({ type: 'sine', freq: f, dur: 0.3, gain: 0.22, delay: i * 0.16 });
+      });
+    } else {
+      [400, 340, 260, 160].forEach(function (f, i) {
+        tone({ type: 'sawtooth', freq: f, dur: 0.5, gain: 0.2, delay: i * 0.22 });
+      });
+    }
+  }
+
+  return {
+    init: init,
+    setVolumes: setVolumes,
+    startAmbience: startAmbience,
+    stopAmbience: stopAmbience,
+    startAlert: startAlert,
+    stopAlert: stopAlert,
+    playClick: playClick,
+    playHover: playHover,
+    playInvestigate: playInvestigate,
+    playCorrect: playCorrect,
+    playPartial: playPartial,
+    playWrong: playWrong,
+    playLevelComplete: playLevelComplete,
+    playBreach: playBreach,
+    playFinalResult: playFinalResult,
+    isReady: function () { return !!ctx; }
+  };
+})();
+/* =========================================================================
+   MEMORY//LEAK — 3D SOC SCENE
+   Builds the explorable Security Operations Center: room shell, three
+   mission workstations, a non-interactive central display, server racks,
+   networking equipment, ambient lighting/fog, and the AABB collider list
+   the player controller uses for movement.
+   ========================================================================= */
+
+let scene, camera, renderer;
+let yawObject, pitchObject;
+const colliders = []; // {minX,maxX,minZ,maxZ}
+const workstations = []; // {index,label,group,anchor:{x,z},alertBeacon,screenMeshes:[],active,alertPulse}
+let centralDisplay = null; // {mesh,canvas,ctx,texture}
+let npcWaypoints = [];
+let npcHomeDesks = [];
+const rackLeds = []; // animated LED meshes
+const playerSpawn = { x: 0, z: 6, ry: 0 };
+
+const ROOM = { minX: -12, maxX: 12, minZ: -8, maxZ: 8, height: 4.2 };
+const PALETTE = {
+  cyan: 0x3ee6e0, blue: 0x5b8fd9, red: 0xff4d5e, amber: 0xe0a94a, green: 0x5ee089,
+  wall: 0x141a22, floor: 0x11151b, ceiling: 0x0d1016, desk: 0x1f252c, chair: 0x20262d,
+  legMetal: 0x0c0e11, rackBody: 0x0e1218, netEquip: 0x171b21, tray: 0x1e2229, bezel: 0x08090b
+};
+
+function hexToCss(hex) { return '#' + hex.toString(16).padStart(6, '0'); }
+
+function makeCanvas(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return { canvas: c, ctx: c.getContext('2d') };
+}
+
+/* ---- Small animated-looking monitor screen texture (pre-baked, swapped by state) ---- */
+function makeScreenTexture(accentHex, mode) {
+  const { canvas, ctx } = makeCanvas(256, 160);
+  const accent = hexToCss(accentHex);
+  ctx.fillStyle = '#04070a'; ctx.fillRect(0, 0, 256, 160);
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  for (let y = 8; y < 160; y += 8) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(256, y); ctx.stroke(); }
+  ctx.fillStyle = accent;
+  ctx.font = '11px Consolas, monospace';
+  ctx.fillText(mode === 'alert' ? 'INCIDENT::ACTIVE' : (mode === 'resolved' ? 'STATUS::CLEAR' : 'NEXUS-SOC::NOMINAL'), 8, 16);
+  ctx.globalAlpha = 0.85;
+  let y = 32;
+  const lineCount = 6 + Math.floor(Math.random() * 4);
+  for (let i = 0; i < lineCount; i++) {
+    const w = 40 + Math.random() * 170;
+    ctx.fillStyle = i % 3 === 0 ? accent : 'rgba(180,200,215,0.35)';
+    ctx.fillRect(8, y, w, 6);
+    y += 12;
+  }
+  if (mode === 'alert') {
+    ctx.strokeStyle = accent; ctx.lineWidth = 2;
+    ctx.strokeRect(4, 4, 248, 152);
+  }
+  ctx.strokeStyle = accent; ctx.globalAlpha = 0.9; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let x = 0; x <= 256; x += 4) {
+    const yy = 140 + Math.sin(x * 0.15 + Math.random() * 2) * 8 * Math.random();
+    if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(canvas);
+  if ('encoding' in tex) tex.encoding = THREE.sRGBEncoding;
+  return tex;
+}
+
+/* ---- Floor tile texture ---- */
+function makeFloorTexture() {
+  const { canvas, ctx } = makeCanvas(256, 256);
+  ctx.fillStyle = '#12161c'; ctx.fillRect(0, 0, 256, 256);
+  ctx.strokeStyle = 'rgba(255,255,255,0.035)'; ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, 254, 254);
+  ctx.fillStyle = 'rgba(255,255,255,0.015)';
+  ctx.fillRect(0, 0, 128, 128); ctx.fillRect(128, 128, 128, 128);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(10, 7);
+  if ('encoding' in tex) tex.encoding = THREE.sRGBEncoding;
+  return tex;
+}
+
+function addCollider(minX, maxX, minZ, maxZ) {
+  colliders.push({ minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ });
+}
+
+function wallBox(w, h, x, y, z, ry, mat) {
+  const geo = new THREE.BoxGeometry(w, h, 0.3);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(x, y, z);
+  mesh.rotation.y = ry || 0;
+  mesh.receiveShadow = true; mesh.castShadow = false;
+  scene.add(mesh);
+  return mesh;
+}
+
+function makeChair(x, z) {
+  const chairMat = new THREE.MeshStandardMaterial({ color: PALETTE.chair, roughness: 0.75, metalness: 0.05 });
+  const legMat = new THREE.MeshStandardMaterial({ color: PALETTE.legMetal, roughness: 0.35, metalness: 0.6 });
+  const g = new THREE.Group();
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.06, 0.46), chairMat);
+  seat.position.y = 0.47; seat.castShadow = true;
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.5, 0.06), chairMat);
+  back.position.set(0, 0.72, -0.2); back.castShadow = true;
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.47, 10), legMat);
+  post.position.y = 0.235;
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.04, 14), legMat);
+  base.position.y = 0.02;
+  g.add(seat, back, post, base);
+  g.position.set(x, 0, z);
+  scene.add(g);
+  return g;
+}
+
+function makeServerRack(x, z) {
+  const bodyMat = new THREE.MeshStandardMaterial({ color: PALETTE.rackBody, roughness: 0.35, metalness: 0.55 });
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 2.0, 0.8), bodyMat);
+  body.position.y = 1.0; body.castShadow = true; body.receiveShadow = true;
+  g.add(body);
+  const rowCount = 8;
+  for (let i = 0; i < rowCount; i++) {
+    const ledColor = Math.random() > 0.65 ? PALETTE.amber : (Math.random() > 0.5 ? PALETTE.cyan : PALETTE.green);
+    const led = new THREE.Mesh(
+      new THREE.BoxGeometry(0.05, 0.025, 0.02),
+      new THREE.MeshStandardMaterial({ color: ledColor, emissive: ledColor, emissiveIntensity: 1.3 })
+    );
+    led.position.set(-0.2 + (i % 4) * 0.13, 1.75 - Math.floor(i / 4) * 0.12, 0.41);
+    g.add(led);
+    rackLeds.push({ mesh: led, baseIntensity: 1.3, colors: [PALETTE.amber, PALETTE.cyan, PALETTE.green, PALETTE.red] });
+  }
+  g.position.set(x, 0, z);
+  scene.add(g);
+  addCollider(x - 0.34, x + 0.34, z - 0.44, z + 0.44);
+  return g;
+}
+
+function buildWorkstation(index, label, x, z) {
+  const deskMat = new THREE.MeshStandardMaterial({ color: PALETTE.desk, roughness: 0.55, metalness: 0.06 });
+  const legMat = new THREE.MeshStandardMaterial({ color: PALETTE.legMetal, roughness: 0.35, metalness: 0.6 });
+  const bezelMat = new THREE.MeshStandardMaterial({ color: PALETTE.bezel, roughness: 0.5, metalness: 0.2 });
+
+  const group = new THREE.Group();
+
+  const top = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.06, 0.85), deskMat);
+  top.position.y = 0.78; top.castShadow = true; top.receiveShadow = true;
+  group.add(top);
+  [[-0.8, -0.36], [0.8, -0.36], [-0.8, 0.36], [0.8, 0.36]].forEach(function (p) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.78, 0.05), legMat);
+    leg.position.set(p[0], 0.39, p[1]);
+    group.add(leg);
+  });
+
+  const idleTex = makeScreenTexture(PALETTE.cyan, 'idle');
+  const screenMeshes = [];
+
+  function addMonitor(offsetX, scale) {
+    const bezel = new THREE.Mesh(new THREE.BoxGeometry(0.62 * scale, 0.44 * scale, 0.04), bezelMat);
+    bezel.position.set(offsetX, 0.78 + 0.34 * scale, -0.3);
+    bezel.castShadow = true;
+    const screenMat = new THREE.MeshStandardMaterial({
+      map: idleTex, emissive: 0xffffff, emissiveMap: idleTex, emissiveIntensity: 0.85, roughness: 0.55
+    });
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.54 * scale, 0.37 * scale), screenMat);
+    screen.position.set(offsetX, 0.78 + 0.34 * scale, -0.278);
+    const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.045, 0.2, 8), legMat);
+    stand.position.set(offsetX, 0.66, -0.3);
+    group.add(bezel, screen, stand);
+    screenMeshes.push(screenMat);
+  }
+  addMonitor(-0.32, 1.0);
+  addMonitor(0.42, 0.72);
+
+  const keyboard = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.02, 0.14), legMat);
+  keyboard.position.set(-0.05, 0.805, 0.15);
+  group.add(keyboard);
+
+  const beaconColor = PALETTE.red;
+  const beacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.045, 12, 12),
+    new THREE.MeshStandardMaterial({ color: beaconColor, emissive: beaconColor, emissiveIntensity: 0.15 })
+  );
+  beacon.position.set(0.85, 1.1, -0.32);
+  group.add(beacon);
+
+  const label3D = makeLabelSprite('WORKSTATION_0' + (index + 1), '#7f93a3');
+  label3D.position.set(0, 1.55, -0.32);
+  label3D.scale.set(0.9, 0.24, 1);
+  group.add(label3D);
+
+  makeChair(x, z + 0.68);
+
+  group.position.set(x, 0, z);
+  scene.add(group);
+
+  addCollider(x - 0.95, x + 0.95, z - 0.48, z + 0.48);
+
+  workstations.push({
+    index: index, label: label, group: group, anchor: { x: x, z: z },
+    alertBeaconMat: beacon.material, screenMeshes: screenMeshes,
+    idleTex: idleTex, active: false, hasAlert: false
+  });
+}
+
+function makeLabelSprite(text, colorCss) {
+  const { canvas, ctx } = makeCanvas(256, 64);
+  ctx.font = '20px Consolas, monospace';
+  ctx.fillStyle = colorCss;
+  ctx.textAlign = 'center';
+  ctx.fillText(text, 128, 40);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  return new THREE.Sprite(mat);
+}
+
+function buildCentralDisplay() {
+  const { canvas, ctx } = makeCanvas(1024, 512);
+  const tex = new THREE.CanvasTexture(canvas);
+  if ('encoding' in tex) tex.encoding = THREE.sRGBEncoding;
+
+  const bezelMat = new THREE.MeshStandardMaterial({ color: PALETTE.bezel, roughness: 0.5, metalness: 0.25 });
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(6.7, 3.35, 0.1), bezelMat);
+  frame.position.set(0, 2.25, -7.86);
+  scene.add(frame);
+
+  const screenMat = new THREE.MeshStandardMaterial({
+    map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 1.0, roughness: 0.6
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(6.3, 3.0), screenMat);
+  mesh.position.set(0, 2.25, -7.805);
+  scene.add(mesh);
+
+  const glow = new THREE.PointLight(0x3ee6e0, 0.7, 6, 2);
+  glow.position.set(0, 2.25, -7.2);
+  scene.add(glow);
+
+  centralDisplay = { mesh: mesh, canvas: canvas, ctx: ctx, texture: tex };
+}
+
+function buildDoorDecor() {
+  const doorMat = new THREE.MeshStandardMaterial({ color: 0x1c222b, roughness: 0.5, metalness: 0.2 });
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x2a333e, roughness: 0.45, metalness: 0.3 });
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(1.7, 2.3, 0.12), frameMat);
+  frame.position.set(0, 1.15, 7.9);
+  scene.add(frame);
+  const leaf = new THREE.Mesh(new THREE.BoxGeometry(1.3, 2.05, 0.06), doorMat);
+  leaf.position.set(0, 1.05, 7.86);
+  scene.add(leaf);
+  const panel = new THREE.Mesh(
+    new THREE.BoxGeometry(0.18, 0.12, 0.02),
+    new THREE.MeshStandardMaterial({ color: PALETTE.green, emissive: PALETTE.green, emissiveIntensity: 0.9 })
+  );
+  panel.position.set(0.55, 1.35, 7.82);
+  scene.add(panel);
+  const light = new THREE.PointLight(0x8fa4bf, 0.5, 4, 2);
+  light.position.set(0, 2.2, 7.6);
+  scene.add(light);
+}
+
+function buildNetworkingCluster(x, z) {
+  const equipMat = new THREE.MeshStandardMaterial({ color: PALETTE.netEquip, roughness: 0.4, metalness: 0.45 });
+  const g = new THREE.Group();
+  const patch = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.14, 0.5), equipMat);
+  patch.position.y = 1.5;
+  g.add(patch);
+  const sw = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.1, 0.5), equipMat);
+  sw.position.y = 1.32;
+  g.add(sw);
+  for (let i = 0; i < 6; i++) {
+    const c = Math.random() > 0.5 ? PALETTE.green : PALETTE.cyan;
+    const port = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.015, 0.015), new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 1.0 }));
+    port.position.set(-0.24 + i * 0.09, 1.32, 0.26);
+    g.add(port);
+    rackLeds.push({ mesh: port, baseIntensity: 1.0, colors: [PALETTE.green, PALETTE.cyan] });
+  }
+  g.position.set(x, 0, z);
+  scene.add(g);
+  addCollider(x - 0.34, x + 0.34, z - 0.3, z + 0.3);
+}
+
+function buildCableTray(x1, z1, x2, z2, y) {
+  const trayMat = new THREE.MeshStandardMaterial({ color: PALETTE.tray, roughness: 0.6, metalness: 0.35 });
+  const len = Math.hypot(x2 - x1, z2 - z1);
+  const tray = new THREE.Mesh(new THREE.BoxGeometry(len, 0.06, 0.35), trayMat);
+  tray.position.set((x1 + x2) / 2, y, (z1 + z2) / 2);
+  tray.rotation.y = Math.atan2(x2 - x1, z2 - z1) - Math.PI / 2;
+  scene.add(tray);
+  return tray;
+}
+
+function buildAmbientDesk(x, z, ry) {
+  const deskMat = new THREE.MeshStandardMaterial({ color: PALETTE.desk, roughness: 0.55, metalness: 0.06 });
+  const legMat = new THREE.MeshStandardMaterial({ color: PALETTE.legMetal, roughness: 0.35, metalness: 0.6 });
+  const g = new THREE.Group();
+  const top = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.06, 0.7), deskMat);
+  top.position.y = 0.76; top.castShadow = true; top.receiveShadow = true;
+  g.add(top);
+  [[-0.65, -0.28], [0.65, -0.28], [-0.65, 0.28], [0.65, 0.28]].forEach(function (p) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.76, 0.05), legMat);
+    leg.position.set(p[0], 0.38, p[1]);
+    g.add(leg);
+  });
+  const tex = makeScreenTexture(PALETTE.blue, 'idle');
+  const bezel = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.36, 0.03),
+    new THREE.MeshStandardMaterial({ color: PALETTE.bezel, roughness: 0.5, metalness: 0.2 }));
+  bezel.position.set(0, 1.02, -0.25);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.29),
+    new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.7, roughness: 0.6 }));
+  screen.position.set(0, 1.02, -0.228);
+  g.add(bezel, screen);
+  g.position.set(x, 0, z);
+  g.rotation.y = ry || 0;
+  scene.add(g);
+  addCollider(x - 0.78, x + 0.78, z - 0.38, z + 0.38);
+  return { x: x, z: z + 0.55 };
+}
+
+function buildRoom() {
+  const wallMat = new THREE.MeshStandardMaterial({ color: PALETTE.wall, roughness: 0.85, metalness: 0.03 });
+  const floorMat = new THREE.MeshStandardMaterial({ map: makeFloorTexture(), color: 0xffffff, roughness: 0.55, metalness: 0.05 });
+  const ceilingMat = new THREE.MeshStandardMaterial({ color: PALETTE.ceiling, roughness: 0.95 });
+  const panelMat = new THREE.MeshStandardMaterial({ color: 0xdfe8f0, emissive: 0xdfe8f0, emissiveIntensity: 0.9, roughness: 0.6 });
+
+  const w = ROOM.maxX - ROOM.minX, d = ROOM.maxZ - ROOM.minZ;
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, d), floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set((ROOM.minX + ROOM.maxX) / 2, 0, (ROOM.minZ + ROOM.maxZ) / 2);
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(w, d), ceilingMat);
+  ceiling.rotation.x = Math.PI / 2;
+  ceiling.position.set((ROOM.minX + ROOM.maxX) / 2, ROOM.height, (ROOM.minZ + ROOM.maxZ) / 2);
+  scene.add(ceiling);
+
+  wallBox(w, ROOM.height, 0, ROOM.height / 2, ROOM.minZ, 0, wallMat); // north
+  wallBox(w, ROOM.height, 0, ROOM.height / 2, ROOM.maxZ, 0, wallMat); // south
+  wallBox(d, ROOM.height, ROOM.minX, ROOM.height / 2, 0, Math.PI / 2, wallMat); // west
+  wallBox(d, ROOM.height, ROOM.maxX, ROOM.height / 2, 0, Math.PI / 2, wallMat); // east
+
+  addCollider(ROOM.minX - 0.3, ROOM.minX + 0.15, ROOM.minZ - 0.5, ROOM.maxZ + 0.5);
+  addCollider(ROOM.maxX - 0.15, ROOM.maxX + 0.3, ROOM.minZ - 0.5, ROOM.maxZ + 0.5);
+  addCollider(ROOM.minX - 0.5, ROOM.maxX + 0.5, ROOM.minZ - 0.3, ROOM.minZ + 0.15);
+  addCollider(ROOM.minX - 0.5, ROOM.maxX + 0.5, ROOM.maxZ - 0.15, ROOM.maxZ + 0.3);
+
+  for (let gx = ROOM.minX + 2; gx < ROOM.maxX; gx += 4) {
+    for (let gz = ROOM.minZ + 2; gz < ROOM.maxZ; gz += 4) {
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), panelMat);
+      p.rotation.x = Math.PI / 2;
+      p.position.set(gx, ROOM.height - 0.02, gz);
+      scene.add(p);
+    }
+  }
+}
+
+function buildLighting() {
+  scene.add(new THREE.HemisphereLight(0x8fa4bf, 0x14161c, 0.65));
+  const key = new THREE.PointLight(0xeaf1ff, 1.35, 22, 2);
+  key.position.set(0, 3.6, 0);
+  key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  scene.add(key);
+
+  [[-6, -3], [6, -3], [0, 2]].forEach(function (p) {
+    const spot = new THREE.SpotLight(0xdfe8f0, 1.1, 9, Math.PI / 3.2, 0.6, 1.6);
+    spot.position.set(p[0], 3.9, p[1]);
+    spot.target.position.set(p[0], 0, p[1]);
+    scene.add(spot); scene.add(spot.target);
+  });
+
+  const rackGlow = new THREE.PointLight(0x4a7ab8, 0.6, 7, 2);
+  rackGlow.position.set(-11, 1.6, 0);
+  scene.add(rackGlow);
+}
+
+function initScene() {
+  const canvasEl = document.getElementById('c');
+  renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  if ('outputEncoding' in renderer) renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x03050a);
+  scene.fog = new THREE.FogExp2(0x03050a, 0.05);
+
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
+  pitchObject = new THREE.Object3D();
+  pitchObject.add(camera);
+  yawObject = new THREE.Object3D();
+  yawObject.position.set(playerSpawn.x, 1.68, playerSpawn.z);
+  yawObject.rotation.y = playerSpawn.ry;
+  yawObject.add(pitchObject);
+  scene.add(yawObject);
+
+  buildLighting();
+  buildRoom();
+  buildDoorDecor();
+  buildCentralDisplay();
+
+  buildWorkstation(0, 'WORKSTATION_01', -7, -2.5);
+  buildWorkstation(1, 'WORKSTATION_02', 0, -4.6);
+  buildWorkstation(2, 'WORKSTATION_03', 7, -2.5);
+
+  makeServerRack(-11.4, -5); makeServerRack(-11.4, -2); makeServerRack(-11.4, 1); makeServerRack(-11.4, 4);
+  buildNetworkingCluster(-11.4, 6.4);
+  buildCableTray(-11.4, -6.2, -11.4, 5.6, 3.7);
+  buildCableTray(-11.2, -0.3, -0.2, -3.9, 3.7);
+
+  const deskA = buildAmbientDesk(10.4, -3, -Math.PI / 2);
+  const deskB = buildAmbientDesk(10.4, 2.2, -Math.PI / 2);
+  npcHomeDesks = [deskA, deskB];
+
+  npcWaypoints = [
+    { x: 3.2, z: 1.5 }, { x: -3.2, z: 3.5 }, { x: -8.5, z: 5.5 },
+    { x: 8.5, z: 5.0 }, { x: 0, z: 5.8 }, { x: -2.5, z: -0.5 },
+    { x: 4.5, z: -4.5 }, { x: -9.5, z: -0.5 }
+  ];
+
+  window.addEventListener('resize', onWindowResize);
+}
+
+function onWindowResize() {
+  if (!camera || !renderer) return;
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+/**
+ * Toggle a workstation's active/alert visual state. Only one workstation
+ * should be active+alert at a time; the flow controller enforces that.
+ */
+function setWorkstationState(index, active, resolvedGood) {
+  workstations.forEach(function (ws) {
+    if (ws.index !== index) return;
+    ws.active = active;
+    const mode = active ? 'alert' : (resolvedGood === true ? 'resolved' : (resolvedGood === false ? 'alert' : 'idle'));
+    const accent = active ? PALETTE.red : (resolvedGood === true ? PALETTE.green : PALETTE.cyan);
+    const tex = makeScreenTexture(accent, mode);
+    ws.screenMeshes.forEach(function (mat) {
+      mat.map = tex; mat.emissiveMap = tex; mat.needsUpdate = true;
+    });
+  });
+}
+
+function updateSceneAmbient(dt, elapsed) {
+  workstations.forEach(function (ws) {
+    if (ws.active) {
+      const pulse = 0.55 + Math.abs(Math.sin(elapsed * 4.2)) * 1.6;
+      ws.alertBeaconMat.emissiveIntensity = pulse;
+    } else {
+      ws.alertBeaconMat.emissiveIntensity = 0.12;
+    }
+  });
+  if (Math.random() < dt * 1.4 && rackLeds.length) {
+    const n = 1 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < n; i++) {
+      const led = rackLeds[Math.floor(Math.random() * rackLeds.length)];
+      const c = led.colors[Math.floor(Math.random() * led.colors.length)];
+      led.mesh.material.color.setHex(c);
+      led.mesh.material.emissive.setHex(c);
+      led.mesh.material.emissiveIntensity = led.baseIntensity * (0.6 + Math.random() * 0.8);
+    }
+  }
+}
+
+/**
+ * Redraw the central SOC display from live game state. Called on state
+ * transitions only (mission start, investigation, defense, result, etc.),
+ * never on a fixed timer, so it always reflects the real game state.
+ */
+function redrawCentralDisplay(state) {
+  if (!centralDisplay) return;
+  const ctx = centralDisplay.ctx;
+  const W = 1024, H = 512;
+  ctx.fillStyle = '#03050a'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(62,230,224,0.18)'; ctx.lineWidth = 3;
+  ctx.strokeRect(6, 6, W - 12, H - 12);
+
+  ctx.fillStyle = '#3ee6e0';
+  ctx.font = '600 30px Consolas, monospace';
+  ctx.fillText('NEXUS // SOC OPERATIONS', 28, 52);
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.beginPath(); ctx.moveTo(28, 66); ctx.lineTo(W - 28, 66); ctx.stroke();
+
+  ctx.fillStyle = '#7f93a3'; ctx.font = '16px Consolas, monospace';
+  ctx.fillText('LEVEL', 28, 118); ctx.fillText('MISSION', 388, 118);
+  ctx.fillStyle = '#d8dfe6'; ctx.font = '600 26px Consolas, monospace';
+  ctx.fillText(state.levelLabel, 28, 150); ctx.fillText(state.missionLabel, 388, 150);
+
+  ctx.fillStyle = '#7f93a3'; ctx.font = '16px Consolas, monospace';
+  ctx.fillText('ACTIVE THREAT', 28, 200); ctx.fillText('TARGET', 388, 200);
+  ctx.fillStyle = state.threat === 'NONE' ? '#7f93a3' : '#ff9a6a'; ctx.font = '600 24px Consolas, monospace';
+  ctx.fillText(state.threat, 28, 230);
+  ctx.fillStyle = '#d8dfe6';
+  ctx.fillText(state.target, 388, 230);
+
+  ctx.fillStyle = '#7f93a3'; ctx.font = '16px Consolas, monospace';
+  ctx.fillText('INVESTIGATION', 28, 280); ctx.fillText('DEFENSE', 388, 280);
+  ctx.fillStyle = '#d8dfe6'; ctx.font = '600 22px Consolas, monospace';
+  ctx.fillText(state.investigation, 28, 308); ctx.fillText(state.defense, 388, 308);
+
+  ctx.fillStyle = '#7f93a3'; ctx.font = '16px Consolas, monospace';
+  ctx.fillText('RESULT', 28, 358);
+  const resultColor = state.result === 'SECURED' ? '#5ee089' : (state.result === 'CONTAINED' ? '#e0a94a' : (state.result === 'BREACHED' ? '#ff4d5e' : '#d8dfe6'));
+  ctx.fillStyle = resultColor; ctx.font = '600 24px Consolas, monospace';
+  ctx.fillText(state.result, 28, 386);
+
+  ctx.fillStyle = '#7f93a3'; ctx.font = '16px Consolas, monospace';
+  ctx.fillText('SYSTEM INTEGRITY', 388, 358);
+  ctx.fillStyle = state.integrity > 50 ? '#5ee089' : (state.integrity > 20 ? '#e0a94a' : '#ff4d5e');
+  ctx.font = '600 24px Consolas, monospace';
+  ctx.fillText(state.integrity + '%', 388, 386);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.strokeRect(388, 396, 320, 10);
+  ctx.fillStyle = state.integrity > 50 ? '#5ee089' : (state.integrity > 20 ? '#e0a94a' : '#ff4d5e');
+  ctx.fillRect(388, 396, Math.max(0, 320 * (state.integrity / 100)), 10);
+
+  ctx.fillStyle = '#7f93a3'; ctx.font = '16px Consolas, monospace';
+  ctx.fillText('ZERO', 28, 440);
+  ctx.fillStyle = '#e0a94a'; ctx.font = '600 24px Consolas, monospace';
+  ctx.fillText(state.zero, 28, 468);
+
+  if (state.banner) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#3ee6e0';
+    ctx.font = '600 34px Consolas, monospace';
+    ctx.fillText(state.banner, W / 2, H / 2);
+    ctx.textAlign = 'left';
+  }
+
+  centralDisplay.texture.needsUpdate = true;
+}
+/* =========================================================================
+   MEMORY//LEAK — PLAYER CONTROLLER
+   Pointer-lock FPS look, WASD + arrow-key movement, shift sprint, space
+   jump, and axis-separated AABB collision against the scene's collider
+   list so the player cannot walk through walls, desks, or server racks.
+   ========================================================================= */
+
+const PLAYER_RADIUS = 0.34;
+const BASE_SPEED = 3.15;
+const SPRINT_MULT = 1.65;
+const JUMP_SPEED = 4.1;
+const GRAVITY = 11.5;
+const INTERACT_RADIUS = 2.6;
+const EYE_HEIGHT = 1.68;
+
+const keys = {};
+let pointerLocked = false;
+let inputEnabled = false;
+let sensitivity = 0.0022;
+let velocityY = 0;
+let verticalOffset = 0;
+let interactTarget = null;
+let footstepPhase = 0;
+
+const MOVE_CODES = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight', 'Space'];
+
+function setSensitivity(v) { sensitivity = v; }
+
+function setInputEnabled(v) {
+  inputEnabled = v;
+  if (!v) {
+    MOVE_CODES.forEach(function (c) { keys[c] = false; });
+    exitLock(); // releasing input must always free the cursor for whatever UI is about to show
+  }
+}
+
+function isPointerLocked() { return pointerLocked; }
+
+function requestLock() {
+  if (renderer && renderer.domElement && document.pointerLockElement !== renderer.domElement) {
+    renderer.domElement.requestPointerLock();
+  }
+}
+
+function exitLock() {
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
+function collidesAt(x, z) {
+  for (let i = 0; i < colliders.length; i++) {
+    const c = colliders[i];
+    if (x + PLAYER_RADIUS > c.minX && x - PLAYER_RADIUS < c.maxX &&
+        z + PLAYER_RADIUS > c.minZ && z - PLAYER_RADIUS < c.maxZ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function resetPlayerPosition() {
+  yawObject.position.set(playerSpawn.x, EYE_HEIGHT, playerSpawn.z);
+  yawObject.rotation.y = playerSpawn.ry;
+  pitchObject.rotation.x = 0;
+  velocityY = 0; verticalOffset = 0;
+}
+
+function initPlayerControls() {
+  document.addEventListener('keydown', function (e) {
+    if (inputEnabled && MOVE_CODES.indexOf(e.code) !== -1) {
+      keys[e.code] = true;
+      e.preventDefault();
+    }
+  });
+  document.addEventListener('keyup', function (e) {
+    if (MOVE_CODES.indexOf(e.code) !== -1) keys[e.code] = false;
+  });
+  document.addEventListener('pointerlockchange', function () {
+    pointerLocked = (document.pointerLockElement === renderer.domElement);
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!pointerLocked) return;
+    const dx = e.movementX || 0, dy = e.movementY || 0;
+    yawObject.rotation.y -= dx * sensitivity;
+    pitchObject.rotation.x -= dy * sensitivity;
+    if (pitchObject.rotation.x > 1.45) pitchObject.rotation.x = 1.45;
+    if (pitchObject.rotation.x < -1.45) pitchObject.rotation.x = -1.45;
+  });
+  renderer.domElement.addEventListener('click', function () {
+    if (inputEnabled) requestLock();
+  });
+}
+
+function updatePlayer(dt) {
+  if (!inputEnabled) { interactTarget = null; return; }
+
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0; forward.normalize();
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+  let moveX = 0, moveZ = 0;
+  if (keys.KeyW || keys.ArrowUp) { moveX += forward.x; moveZ += forward.z; }
+  if (keys.KeyS || keys.ArrowDown) { moveX -= forward.x; moveZ -= forward.z; }
+  if (keys.KeyD || keys.ArrowRight) { moveX += right.x; moveZ += right.z; }
+  if (keys.KeyA || keys.ArrowLeft) { moveX -= right.x; moveZ -= right.z; }
+
+  const len = Math.hypot(moveX, moveZ);
+  let moved = false;
+  if (len > 0.0001) {
+    moveX /= len; moveZ /= len;
+    const sprinting = !!(keys.ShiftLeft || keys.ShiftRight);
+    const speed = BASE_SPEED * (sprinting ? SPRINT_MULT : 1);
+    const dx = moveX * speed * dt;
+    const dz = moveZ * speed * dt;
+
+    const x = yawObject.position.x, z = yawObject.position.z;
+    if (!collidesAt(x + dx, z)) { yawObject.position.x = x + dx; moved = true; }
+    if (!collidesAt(yawObject.position.x, z + dz)) { yawObject.position.z = z + dz; moved = true; }
+  }
+  if (moved) footstepPhase += dt;
+
+  const grounded = verticalOffset <= 0.001;
+  if (keys.Space && grounded) { velocityY = JUMP_SPEED; }
+  velocityY -= GRAVITY * dt;
+  verticalOffset += velocityY * dt;
+  if (verticalOffset < 0) { verticalOffset = 0; velocityY = 0; }
+  yawObject.position.y = EYE_HEIGHT + verticalOffset;
+
+  interactTarget = null;
+  let bestDist = INTERACT_RADIUS;
+  workstations.forEach(function (ws) {
+    if (!ws.active) return;
+    const d = Math.hypot(yawObject.position.x - ws.anchor.x, yawObject.position.z - ws.anchor.z);
+    if (d < bestDist) { bestDist = d; interactTarget = ws; }
+  });
+}
+
+function getInteractTarget() { return interactTarget; }
+function getFootstepPhase() { return footstepPhase; }
+/* =========================================================================
+   MEMORY//LEAK — AMBIENT SOC ANALYST NPCs
+   Four non-interactive NPCs that walk, sit, work, and idle around the SOC
+   on independent, semi-random timers so they never look synchronized. They
+   do not collide with the player (so they can never block gameplay) and
+   steer clear of the currently-active workstation.
+   ========================================================================= */
+
+const NPCS = [];
+const NPC_NAMES = ['SOC_Analyst_01', 'SOC_Analyst_02', 'SOC_Analyst_03', 'SOC_Analyst_04'];
+const NPC_ACCENTS = [0x3ee6e0, 0x5b8fd9, 0xe0a94a, 0x7f93a3];
+const NPC_EXCLUSION_RADIUS = 2.4;
+const NPC_SEPARATION = 0.85;
+const NPC_SPEED = 1.15;
+
+function npcAwayFromActiveWorkstation(x, z) {
+  for (let i = 0; i < workstations.length; i++) {
+    const ws = workstations[i];
+    if (!ws.active) continue;
+    if (Math.hypot(x - ws.anchor.x, z - ws.anchor.z) < NPC_EXCLUSION_RADIUS) return false;
+  }
+  return true;
+}
+
+function npcPickWaypoint() {
+  const candidates = npcWaypoints.filter(function (p) { return npcAwayFromActiveWorkstation(p.x, p.z); });
+  const pool = candidates.length ? candidates : npcWaypoints;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function buildNpcMesh(accent) {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x232a33, roughness: 0.7, metalness: 0.05 });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 0.95, 12), bodyMat);
+  body.position.y = 0.58; body.castShadow = true;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 14, 14), new THREE.MeshStandardMaterial({ color: 0x3a4048, roughness: 0.6 }));
+  head.position.y = 1.18; head.castShadow = true;
+  const chip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 0.02), new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.9 }));
+  chip.position.set(0, 0.78, 0.24);
+  g.add(body, head, chip);
+  return g;
+}
+
+function initNPCs() {
+  const startSpots = [
+    npcHomeDesks[0] || { x: 3, z: 1 },
+    npcHomeDesks[1] || { x: -3, z: 3 },
+    { x: -2.5, z: -0.5 },
+    { x: 4.5, z: -4.5 }
+  ];
+  for (let i = 0; i < 4; i++) {
+    const mesh = buildNpcMesh(NPC_ACCENTS[i]);
+    const label = makeLabelSprite(NPC_NAMES[i], '#5f7382');
+    label.position.set(0, 1.55, 0);
+    label.scale.set(1.1, 0.26, 1);
+    mesh.add(label);
+    const spot = startSpots[i];
+    mesh.position.set(spot.x, 0, spot.z);
+    scene.add(mesh);
+
+    NPCS.push({
+      name: NPC_NAMES[i],
+      mesh: mesh,
+      hasHomeDesk: i < 2,
+      homeDesk: i < 2 ? npcHomeDesks[i] : null,
+      state: 'IDLE',
+      target: { x: spot.x, z: spot.z },
+      facing: 0,
+      stateTimer: 1 + Math.random() * 3,
+      reactUntil: 0,
+      reactYaw: 0
+    });
+  }
+}
+
+function npcChooseNextState(npc) {
+  const r = Math.random();
+  if (npc.hasHomeDesk && r < 0.4) {
+    npc.state = 'SIT';
+    npc.target = { x: npc.homeDesk.x, z: npc.homeDesk.z };
+    npc.stateTimer = 8 + Math.random() * 14;
+  } else if (r < 0.75) {
+    npc.state = 'WALK';
+    npc.target = npcPickWaypoint();
+    npc.stateTimer = 20;
+  } else {
+    npc.state = 'IDLE';
+    npc.target = { x: npc.mesh.position.x, z: npc.mesh.position.z };
+    npc.stateTimer = 3 + Math.random() * 5;
+  }
+}
+
+function npcReactToAlert(anchor) {
+  NPCS.forEach(function (npc) {
+    if (Math.random() < 0.55) {
+      const dx = anchor.x - npc.mesh.position.x, dz = anchor.z - npc.mesh.position.z;
+      npc.reactYaw = Math.atan2(dx, dz);
+      npc.reactUntil = performance.now() + 1800 + Math.random() * 1800;
+    }
+  });
+}
+
+function updateNPCs(dt) {
+  NPCS.forEach(function (npc) {
+    npc.stateTimer -= dt;
+    if (npc.stateTimer <= 0) npcChooseNextState(npc);
+
+    if ((npc.state === 'WALK') && !npcAwayFromActiveWorkstation(npc.target.x, npc.target.z)) {
+      npc.target = npcPickWaypoint();
+    }
+
+    const p = npc.mesh.position;
+    if (npc.state === 'WALK') {
+      const dx = npc.target.x - p.x, dz = npc.target.z - p.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 0.12) {
+        let vx = (dx / dist) * NPC_SPEED, vz = (dz / dist) * NPC_SPEED;
+        // mild separation from other NPCs
+        NPCS.forEach(function (other) {
+          if (other === npc) return;
+          const ox = p.x - other.mesh.position.x, oz = p.z - other.mesh.position.z;
+          const od = Math.hypot(ox, oz);
+          if (od > 0.001 && od < NPC_SEPARATION) {
+            vx += (ox / od) * 0.6; vz += (oz / od) * 0.6;
+          }
+        });
+        const nx = p.x + vx * dt, nz = p.z + vz * dt;
+        if (!collidesAt(nx, p.z)) p.x = nx;
+        if (!collidesAt(p.x, nz)) p.z = nz;
+        npc.facing = Math.atan2(vx, vz);
+      } else {
+        npc.stateTimer = Math.min(npc.stateTimer, 1.5 + Math.random() * 2);
+      }
+    } else if (npc.state === 'SIT' && npc.homeDesk) {
+      p.x += (npc.homeDesk.x - p.x) * Math.min(1, dt * 3);
+      p.z += (npc.homeDesk.z - p.z) * Math.min(1, dt * 3);
+      npc.facing = Math.PI;
+    }
+
+    const now = performance.now();
+    if (now < npc.reactUntil) {
+      npc.mesh.rotation.y = npc.reactYaw;
+    } else {
+      npc.mesh.rotation.y += (npc.facing - npc.mesh.rotation.y) * Math.min(1, dt * 4);
+    }
+  });
+}
+/* =========================================================================
+   MEMORY//LEAK — UI LAYER
+   Pure presentation: screen switching, HUD, and all panel rendering. Button
+   actions call into UI_CALLBACKS, which main.js populates, so this file
+   never needs to know about game-flow internals.
+   ========================================================================= */
+
+const UI_CALLBACKS = {};
+const DOM = {};
+
+const OVERLAY_IDS = [
+  'mainMenu', 'levelSelectScreen', 'terminalPanel', 'resultPanel', 'levelCompletePanel',
+  'breachPanel', 'finalIntroPanel', 'finalStagePanel', 'finalResultPanel',
+  'pauseMenu', 'settingsPanel', 'missionLogPanel', 'infoPanel'
+];
+
+function cacheDom() {
+  OVERLAY_IDS.concat([
+    'loadingScreen', 'loadingLines', 'loadingBarInner', 'crosshair', 'prompt', 'hud',
+    'levelTransitionScreen', 'ltTag', 'ltMain', 'ltDivider', 'ltSub',
+    'integrityText', 'integrityFill', 'hudMissionText', 'zeroPanel', 'zeroStateText',
+    'clickToResumeHint', 'levelGrid', 'terminalBody', 'resultHead', 'resultTag',
+    'resultExplain', 'resultFindings', 'resultIntegrityDelta', 'resultZeroNote',
+    'btnResultContinue', 'levelCompleteTitle', 'lcCorrect', 'lcPartial', 'lcWrong',
+    'lcIntegrity', 'btnLevelCompleteContinue', 'breachExplain', 'breachMissionReached',
+    'finalIntroText', 'finalStageHead', 'finalStageTag', 'finalResultTag',
+    'finalResultExplain', 'finalResultIntegrity', 'missionLogBody',
+    'sensSlider', 'volMaster', 'volAmbience', 'volSfx',
+    'btnPlay', 'btnContinue', 'btnSettings', 'btnQuit', 'btnInfo', 'btnCloseInfo',
+    'btnLevelSelectBack', 'btnLevelSelectLogs',
+    'btnResume', 'btnRestartMission', 'btnPauseSettings', 'btnPauseLogs', 'btnQuitToMenu',
+    'btnCloseSettings', 'btnCloseMissionLog', 'btnBreachMenu', 'btnFinalIntroContinue',
+    'btnFinalStageContinue', 'btnFinalResultMenu'
+  ]).forEach(function (id) { DOM[id] = document.getElementById(id); });
+}
+
+let settingsReturnTo = 'mainMenu';
+
+function hideAllOverlays() {
+  OVERLAY_IDS.forEach(function (id) { if (DOM[id]) DOM[id].classList.add('hidden'); });
+}
+
+function showOverlay(id) {
+  hideAllOverlays();
+  if (DOM[id]) DOM[id].classList.remove('hidden');
+}
+
+function setHudVisible(v) {
+  DOM.hud.classList.toggle('hidden', !v);
+  DOM.zeroPanel.classList.toggle('hidden', !v);
+  DOM.crosshair.classList.toggle('hidden', !v);
+}
+
+function showPrompt(text) {
+  DOM.prompt.textContent = text;
+  DOM.prompt.style.display = 'block';
+}
+function hidePrompt() { DOM.prompt.style.display = 'none'; }
+
+function showClickToResume(v) { DOM.clickToResumeHint.classList.toggle('hidden', !v); }
+
+/* ---------------- HUD + ZERO panel ---------------- */
+function updateHUD(model) {
+  DOM.integrityText.textContent = Math.round(model.integrity) + '%';
+  DOM.integrityFill.style.width = Math.max(0, model.integrity) + '%';
+  DOM.integrityFill.style.background = model.integrity > 50
+    ? 'linear-gradient(90deg,#5b8fd9,#3ee6e0)'
+    : (model.integrity > 20 ? 'linear-gradient(90deg,#c98a3f,#e0a94a)' : 'linear-gradient(90deg,#c9515f,#ff4d5e)');
+  // LEVEL and MISSION are shown as two distinct labeled fields, never
+  // combined into one string.
+  DOM.hudMissionText.innerHTML =
+    '<div class="hudField"><span class="hudFieldKey">LEVEL</span>' + model.levelLabel + '</div>' +
+    '<div class="hudField"><span class="hudFieldKey">MISSION</span>' + model.missionLabel + '</div>' +
+    '<div class="hudHint">' + model.hint + '</div>';
+  DOM.zeroStateText.textContent = model.zeroState;
+}
+
+/* ---------------- Loading screen ---------------- */
+function runLoadingSequence(onDone) {
+  const steps = [
+    { pct: 30, text: 'Initializing Security Systems...' },
+    { pct: 68, text: 'Loading Threat Intelligence...' },
+    { pct: 100, text: 'Connecting...' }
+  ];
+  let i = 0;
+  function next() {
+    if (i >= steps.length) { setTimeout(onDone, 260); return; }
+    const step = steps[i++];
+    const div = document.createElement('div');
+    div.textContent = step.text;
+    DOM.loadingLines.appendChild(div);
+    DOM.loadingBarInner.style.width = step.pct + '%';
+    setTimeout(function () {
+      div.classList.add('done');
+      next();
+    }, 430 + Math.random() * 260);
+  }
+  next();
+}
+
+function hideLoadingScreen() {
+  DOM.loadingScreen.style.opacity = '0';
+  setTimeout(function () { DOM.loadingScreen.style.display = 'none'; }, 420);
+}
+
+/* ---------------- Incident terminal ---------------- */
+function renderTerminal(incident, wsLabel, investigatedIds, elapsedLabel) {
+  showOverlay('terminalPanel');
+  const sevClass = incident.severity === 'HIGH' ? 'wrong' : (incident.severity === 'MEDIUM' ? 'partial' : 'correct');
+  let html = '';
+  html += '<div class="alertHead"><span class="tag">' + incident.severity + ' SEVERITY</span>' +
+    '<h2>' + incident.familyLabel + ' — ' + wsLabel + '</h2></div>';
+  html += '<div class="explain">' + incident.summary + '</div>';
+  html += '<div class="fieldRow"><div class="k">TIME ON SCENE</div><div class="v" id="incidentTimer">' + elapsedLabel + '</div></div>';
+  html += '<div class="sectionLabel">Evidence</div><div class="btnRow" id="evidenceRow">';
+  incident.evidence.forEach(function (e) {
+    const done = investigatedIds.has(e.id);
+    html += '<button class="actBtn' + (done ? ' done' : '') + '" data-ev="' + e.id + '">' + e.label + (done ? ' \u2713' : '') + '</button>';
+  });
+  html += '</div><div id="evidenceReveal">';
+  incident.evidence.forEach(function (e) {
+    if (investigatedIds.has(e.id)) {
+      html += '<div class="clue">' + e.label + ': ' + e.text + '</div>';
+    }
+  });
+  html += '</div>';
+  html += '<div class="sectionLabel">Defense Actions</div><div class="btnRow" id="defenseRow">';
+  incident.defenses.forEach(function (d) {
+    html += '<button class="actBtn decideBtn" data-def="' + d.id + '">' + d.label + '</button>';
+  });
+  html += '</div>';
+  DOM.terminalBody.innerHTML = html;
+
+  DOM.terminalBody.querySelectorAll('[data-ev]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (UI_CALLBACKS.onInvestigate) UI_CALLBACKS.onInvestigate(btn.getAttribute('data-ev'));
+    });
+  });
+  DOM.terminalBody.querySelectorAll('[data-def]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (UI_CALLBACKS.onDefenseChosen) UI_CALLBACKS.onDefenseChosen(btn.getAttribute('data-def'));
+    });
+  });
+}
+
+function updateTerminalTimer(elapsedLabel) {
+  const el = document.getElementById('incidentTimer');
+  if (el) el.textContent = elapsedLabel;
+}
+
+/* ---------------- Result panel ---------------- */
+function renderResult(data) {
+  showOverlay('resultPanel');
+  DOM.resultHead.textContent = 'INCIDENT RESULT — ' + data.missionResult;
+  DOM.resultTag.textContent = data.missionResult + ' \u2014 ' + data.outcome;
+  DOM.resultTag.className = 'resultTag ' + (data.outcome === 'CORRECT' ? 'correct' : data.outcome === 'PARTIAL' ? 'partial' : 'wrong');
+  DOM.resultExplain.textContent = data.explanation;
+  let findingsHtml = '';
+  if (data.findings.length) {
+    findingsHtml += '<div class="sectionLabel">Findings Reviewed</div>';
+    data.findings.forEach(function (f) { findingsHtml += '<div class="clue">' + f + '</div>'; });
+  } else {
+    findingsHtml += '<div class="clue">No evidence was reviewed before this decision.</div>';
+  }
+  DOM.resultFindings.innerHTML = findingsHtml;
+  DOM.resultIntegrityDelta.textContent = data.integrityDeltaText;
+  DOM.resultZeroNote.textContent = data.zeroNote;
+  DOM.btnResultContinue.textContent = data.continueLabel || 'CONTINUE';
+  DOM.btnResultContinue.onclick = function () { if (UI_CALLBACKS.onResultContinue) UI_CALLBACKS.onResultContinue(); };
+}
+
+/* ---------------- Level transition cinematic ---------------- */
+let ltActiveTimers = [];
+
+/**
+ * Full-screen dim + glitch-in cinematic used for "LEVEL COMPLETE / X" and
+ * "NEXT LEVEL / Y" beats. Purely presentational — caller supplies text and
+ * a callback to run once the cinematic has finished and faded out.
+ * tag: small label above the main line (e.g. "LEVEL COMPLETE", "NEXT LEVEL")
+ * main: the big line (e.g. a level name)
+ * subHtml: optional smaller line below (HTML allowed for <span class="hl">)
+ * holdMs: how long to hold before fading out (default 2200)
+ * onDone: called after the overlay has fully faded out
+ */
+function playLevelTransition(tag, main, subHtml, holdMs, onDone) {
+  ltActiveTimers.forEach(function (t) { clearTimeout(t); });
+  ltActiveTimers = [];
+
+  const el = DOM.levelTransitionScreen;
+  if (!el) { if (onDone) onDone(); return; }
+
+  DOM.ltTag.textContent = tag;
+  DOM.ltMain.textContent = main;
+  DOM.ltSub.innerHTML = subHtml || '';
+  [DOM.ltTag, DOM.ltMain, DOM.ltDivider, DOM.ltSub].forEach(function (n) { n.classList.remove('reveal'); });
+
+  el.classList.remove('hidden');
+  // Force layout so the removed 'hidden' class is applied before we add 'show',
+  // otherwise the opacity transition can get skipped by the browser.
+  void el.offsetWidth;
+  el.classList.add('show');
+
+  ltActiveTimers.push(setTimeout(function () { DOM.ltTag.classList.add('reveal'); }, 120));
+  ltActiveTimers.push(setTimeout(function () {
+    DOM.ltMain.classList.add('reveal');
+    AudioSys.playLevelComplete();
+  }, 380));
+  ltActiveTimers.push(setTimeout(function () { DOM.ltDivider.classList.add('reveal'); }, 760));
+  ltActiveTimers.push(setTimeout(function () { DOM.ltSub.classList.add('reveal'); }, 900));
+
+  ltActiveTimers.push(setTimeout(function () {
+    el.classList.remove('show');
+    ltActiveTimers.push(setTimeout(function () {
+      el.classList.add('hidden');
+      if (onDone) onDone();
+    }, 550));
+  }, holdMs || 2200));
+}
+
+/* ---------------- Level complete ---------------- */
+function renderLevelComplete(data) {
+  showOverlay('levelCompletePanel');
+  DOM.levelCompleteTitle.textContent = 'LEVEL COMPLETE — ' + data.levelLabel;
+  DOM.lcCorrect.textContent = data.correct;
+  DOM.lcPartial.textContent = data.partial;
+  DOM.lcWrong.textContent = data.wrong;
+  DOM.lcIntegrity.textContent = Math.round(data.integrity) + '%';
+  DOM.btnLevelCompleteContinue.onclick = function () { if (UI_CALLBACKS.onLevelCompleteContinue) UI_CALLBACKS.onLevelCompleteContinue(); };
+}
+
+/* ---------------- Breach ---------------- */
+function renderBreach(data) {
+  showOverlay('breachPanel');
+  DOM.breachExplain.textContent = data.explain;
+  DOM.breachMissionReached.textContent = data.missionReached;
+  DOM.btnBreachMenu.onclick = function () { if (UI_CALLBACKS.onBreachToMenu) UI_CALLBACKS.onBreachToMenu(); };
+}
+
+/* ---------------- Final protocol ---------------- */
+function renderFinalIntro(text) {
+  showOverlay('finalIntroPanel');
+  DOM.finalIntroText.textContent = text;
+  DOM.btnFinalIntroContinue.onclick = function () { if (UI_CALLBACKS.onFinalIntroContinue) UI_CALLBACKS.onFinalIntroContinue(); };
+}
+
+function renderFinalStage(stageNum, totalStages, familyLabel) {
+  showOverlay('finalStagePanel');
+  DOM.finalStageHead.textContent = 'STAGE ' + stageNum + ' OF ' + totalStages;
+  DOM.finalStageTag.textContent = familyLabel + ' INBOUND';
+  DOM.finalStageTag.className = 'resultTag wrong';
+  DOM.btnFinalStageContinue.onclick = function () { if (UI_CALLBACKS.onFinalStageContinue) UI_CALLBACKS.onFinalStageContinue(); };
+}
+
+function renderFinalResult(data) {
+  showOverlay('finalResultPanel');
+  DOM.finalResultTag.textContent = data.title;
+  DOM.finalResultTag.className = 'resultTag ' + data.tagClass;
+  DOM.finalResultExplain.textContent = data.explain;
+  DOM.finalResultIntegrity.textContent = Math.round(data.integrity) + '%';
+  DOM.btnFinalResultMenu.onclick = function () { if (UI_CALLBACKS.onFinalResultMenu) UI_CALLBACKS.onFinalResultMenu(); };
+}
+
+/* ---------------- Level select (with keyboard focus) ---------------- */
+let levelSelectFocusIndex = 0;
+
+function isLevelEnterable(save, i) {
+  const unlocked = save.run.unlockedLevels[i];
+  const stats = save.run.levelStats[i];
+  return !!(unlocked && !stats.completed && i === save.run.levelIndex);
+}
+
+function defaultLevelSelectFocus(save) {
+  for (let i = 0; i < LEVELS.length; i++) { if (isLevelEnterable(save, i)) return i; }
+  for (let i = 0; i < LEVELS.length; i++) { if (save.run.unlockedLevels[i]) return i; }
+  return 0;
+}
+
+function applyLevelSelectFocusClasses() {
+  DOM.levelGrid.querySelectorAll('.levelRow').forEach(function (row) {
+    const idx = parseInt(row.getAttribute('data-row'), 10);
+    row.classList.toggle('levelRowFocused', idx === levelSelectFocusIndex);
+  });
+}
+
+/**
+ * keepFocus: pass true when re-rendering the same visit to this screen
+ * (e.g. returning from a nested modal) so the highlighted row doesn't
+ * jump back to the default. Omit (or pass false) on a fresh entry.
+ */
+function renderLevelSelect(save, keepFocus) {
+  showOverlay('levelSelectScreen');
+  if (!keepFocus) levelSelectFocusIndex = defaultLevelSelectFocus(save);
+
+  let html = '';
+  LEVELS.forEach(function (lvl, i) {
+    const unlocked = save.run.unlockedLevels[i];
+    const stats = save.run.levelStats[i];
+    const enterable = isLevelEnterable(save, i);
+    let stateLabel, btn;
+    if (!unlocked) {
+      stateLabel = 'LOCKED';
+      btn = '<button class="actBtn" disabled>LOCKED</button>';
+    } else if (stats.completed) {
+      stateLabel = 'COMPLETED \u2014 best integrity ' + (stats.bestIntegrity != null ? Math.round(stats.bestIntegrity) + '%' : '\u2014');
+      btn = '<button class="actBtn" disabled>COMPLETED</button>';
+    } else if (enterable) {
+      stateLabel = (save.run.missionInLevel > 0 ? ('IN PROGRESS \u2014 mission ' + (save.run.missionInLevel + 1) + '/5') : 'READY');
+      btn = '<button class="actBtn decideBtn" data-level="' + i + '">' + (save.run.missionInLevel > 0 ? 'RESUME' : 'ENTER') + '</button>';
+    } else {
+      stateLabel = 'UPCOMING';
+      btn = '<button class="actBtn" disabled>LOCKED</button>';
+    }
+    const focused = (i === levelSelectFocusIndex);
+    html += '<div class="levelRow' + (focused ? ' levelRowFocused' : '') + '" data-row="' + i + '">' +
+      '<div class="k" style="width:150px">' + lvl.label + '</div>' +
+      '<div class="v" style="flex:1">5 MISSIONS \u00b7 ' + stateLabel + '</div>' + btn + '</div>';
+  });
+  DOM.levelGrid.innerHTML = html;
+
+  DOM.levelGrid.querySelectorAll('[data-level]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const idx = parseInt(btn.getAttribute('data-level'), 10);
+      levelSelectFocusIndex = idx;
+      if (UI_CALLBACKS.onEnterLevel) UI_CALLBACKS.onEnterLevel(idx);
+    });
+  });
+  DOM.levelGrid.querySelectorAll('.levelRow').forEach(function (row) {
+    row.addEventListener('mouseenter', function () {
+      levelSelectFocusIndex = parseInt(row.getAttribute('data-row'), 10);
+      applyLevelSelectFocusClasses();
+    });
+  });
+}
+
+/** Arrow Up/Down: move the highlighted row. Wraps around at the ends. */
+function moveLevelSelectFocus(save, delta) {
+  levelSelectFocusIndex = (levelSelectFocusIndex + delta + LEVELS.length) % LEVELS.length;
+  applyLevelSelectFocusClasses();
+  const row = DOM.levelGrid.querySelector('.levelRow[data-row="' + levelSelectFocusIndex + '"]');
+  if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+}
+
+/** Enter/click-equivalent: launches the highlighted row only if it is
+ * actually unlocked and enterable — locked levels never launch. */
+function activateLevelSelectFocus(save) {
+  if (!isLevelEnterable(save, levelSelectFocusIndex)) return;
+  if (UI_CALLBACKS.onEnterLevel) UI_CALLBACKS.onEnterLevel(levelSelectFocusIndex);
+}
+
+/* ---------------- Mission log ---------------- */
+function renderMissionLog(save) {
+  showOverlay('missionLogPanel');
+  const log = save.run.missionLog;
+  if (!log.length) {
+    DOM.missionLogBody.innerHTML = '<div class="explain">No incidents logged yet this run.</div>';
+    return;
+  }
+  let html = '';
+  for (let i = log.length - 1; i >= 0; i--) {
+    const e = log[i];
+    const cls = e.outcome === 'CORRECT' ? 'correct' : e.outcome === 'PARTIAL' ? 'partial' : 'wrong';
+    html += '<div class="fieldRow"><div class="k">#' + e.missionNumber + '</div><div class="v">' +
+      e.levelLabel + ' \u00b7 ' + e.familyLabel + ' \u2192 ' + e.workstation + ' \u2014 ' +
+      '<span class="resultTag ' + cls + '" style="font-size:12px;padding:0;display:inline">' + e.outcome + '</span>' +
+      ' \u00b7 defense: ' + e.defenseLabel + ' \u00b7 integrity ' + e.integrityDeltaText + '</div></div>';
+  }
+  DOM.missionLogBody.innerHTML = html;
+}
+
+/* ---------------- Settings ---------------- */
+function applySettingsToUI(settings) {
+  DOM.sensSlider.value = sensToSlider(settings.mouseSensitivity);
+  DOM.volMaster.value = Math.round(settings.masterVolume * 100);
+  DOM.volAmbience.value = Math.round(settings.ambienceVolume * 100);
+  DOM.volSfx.value = Math.round(settings.sfxVolume * 100);
+}
+
+function showSettings(returnTo) {
+  showOverlay('settingsPanel');
+  settingsReturnTo = returnTo;
+}
+/* =========================================================================
+   MEMORY//LEAK — MAIN FLOW CONTROLLER
+   Owns the core game state machine and wires every UI callback to the
+   actual mission flow: mission select -> alert -> investigation -> defense
+   -> contextual result -> ZERO adaptation -> next mission / level complete
+   / breach / final protocol.
+   ========================================================================= */
+
+let save = null;
+let coreState = 'LOADING'; // LOADING, MENU, LEVEL_SELECT, FREE_ROAM, TERMINAL, RESULT, LEVEL_COMPLETE, BREACH, FINAL_INTRO, FINAL_STAGE_TRANSITION, FINAL_RESULT
+let activeModal = null; // null, PAUSE, SETTINGS, MISSIONLOG
+let settingsMouseDefault = 0.0022;
+let missionLogReturnTo = 'LEVEL_SELECT';
+
+let currentIncident = null;
+let investigatedIds = new Set();
+let activeWorkstationIndex = -1;
+let incidentElapsed = 0;
+let alertActive = false;
+let pendingBreach = false;
+const INCIDENT_TIMEOUT_SECONDS = 150;
+
+let inFinalAttack = false;
+let finalStages = [];
+let finalStageIndex = 0;
+
+let clock = null;
+
+/* ---------------- small helpers ---------------- */
+function formatElapsed(s) {
+  const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+  return (m < 10 ? '0' : '') + m + ':' + (sec < 10 ? '0' : '') + sec;
+}
+function currentWsLabel() { return activeWorkstationIndex >= 0 ? workstations[activeWorkstationIndex].label : ''; }
+function sliderToSens(v) { return settingsMouseDefault * (v / 5); }
+function sensToSlider(s) { return Math.max(1, Math.min(10, Math.round((s / settingsMouseDefault) * 5))); }
+
+function buildExplanation(incident, outcome, ignored) {
+  if (ignored) return 'The incident window closed with no response submitted. ' + incident.summary;
+  if (outcome === 'CORRECT') return 'The investigation supported the response taken. ' + incident.summary;
+  if (outcome === 'PARTIAL') return 'The response reduced the impact but was not the ideal action, or the investigation was incomplete. ' + incident.summary;
+  return 'The chosen response did not match what this incident required. ' + incident.summary;
+}
+
+function buildDisplayState(overrides) {
+  const lvlDef = LEVELS[save.run.levelIndex];
+  const stageTag = inFinalAttack ? (' [FINAL STAGE ' + (finalStageIndex + 1) + '/' + finalStages.length + ']') : '';
+  const base = {
+    // LEVEL and MISSION are always the real, current level/mission — the
+    // final-protocol stages ARE mission 5 of IMPOSSIBLE, not a separate
+    // pseudo-level, so this field never shows a fake "FINAL PROTOCOL" name.
+    levelLabel: lvlDef.label,
+    missionLabel: Math.min(save.run.missionInLevel + 1, MISSIONS_PER_LEVEL) + '/' + MISSIONS_PER_LEVEL,
+    threat: currentIncident ? (currentIncident.familyLabel + stageTag) : 'NONE',
+    target: activeWorkstationIndex >= 0 ? workstations[activeWorkstationIndex].label : '\u2014',
+    investigation: 'WAITING',
+    defense: 'WAITING',
+    result: 'WAITING',
+    integrity: save.run.integrity,
+    zero: save.run.zero.state,
+    banner: null
+  };
+  return Object.assign(base, overrides || {});
+}
+
+function refreshDisplays(overrides) {
+  const model = buildDisplayState(overrides);
+  redrawCentralDisplay(model);
+  updateHUD({
+    integrity: model.integrity, levelLabel: model.levelLabel, missionLabel: model.missionLabel,
+    zeroState: model.zero,
+    hint: (currentIncident && alertActive) ? ('ALERT: ' + model.threat + ' @ ' + model.target) : 'Awaiting next incident'
+  });
+}
+
+/* ---------------- menu flow ---------------- */
+function showMainMenu() {
+  coreState = 'MENU';
+  activeModal = null;
+  inFinalAttack = false;
+  setInputEnabled(false);
+  AudioSys.stopAmbience();
+  AudioSys.stopAlert();
+  setHudVisible(false);
+  showOverlay('mainMenu');
+  DOM.btnContinue.disabled = !save.run.active;
+  DOM.btnContinue.classList.toggle('disabledBtn', !save.run.active);
+}
+
+function startNewRun() {
+  const keepSettings = save.settings, keepLifetime = save.lifetime;
+  save = defaultSave();
+  save.settings = keepSettings;
+  save.lifetime = keepLifetime;
+  save.run.active = true;
+  save.lifetime.totalRuns = (save.lifetime.totalRuns || 0) + 1;
+  writeSave(save);
+  goToLevelSelect();
+}
+
+function goToLevelSelect() {
+  coreState = 'LEVEL_SELECT';
+  activeModal = null;
+  setInputEnabled(false);
+  setHudVisible(false);
+  renderLevelSelect(save);
+}
+
+function enterGameplay() {
+  coreState = 'FREE_ROAM';
+  resetPlayerPosition();
+  setInputEnabled(true);
+  setHudVisible(true);
+  hidePrompt();
+  hideAllOverlays();
+  AudioSys.init();
+  AudioSys.startAmbience();
+  beginMission();
+}
+
+/**
+ * Called when the player clicks ENTER/RESUME on a level-select row, or
+ * presses Enter while that row is keyboard-focused. Only ever fires for
+ * a row isLevelEnterable() has approved, so idx is always the current,
+ * unlocked, not-yet-completed level.
+ */
+UI_CALLBACKS.onEnterLevel = function (idx) {
+  AudioSys.init();
+  AudioSys.playClick();
+  save.run.levelIndex = idx;
+  writeSave(save);
+  enterGameplay();
+};
+
+/* ---------------- mission flow ---------------- */
+function beginMission() {
+  currentIncident = null;
+  activeWorkstationIndex = -1;
+  investigatedIds = new Set();
+  incidentElapsed = 0;
+  alertActive = false;
+  pendingBreach = false;
+
+  // Structure is always exactly 6 levels x 5 missions = 30 missions.
+  // IMPOSSIBLE's mission 5 (the last mission slot of the last level) IS
+  // the personalized multi-stage ZERO finale, not an extra 31st mission.
+  const isImpossible = save.run.levelIndex === LEVELS.length - 1;
+  const isFinalMissionSlot = isImpossible && save.run.missionInLevel === MISSIONS_PER_LEVEL - 1;
+  if (isFinalMissionSlot) {
+    beginFinalAttack();
+    return;
+  }
+
+  save.run.zero.state = 'TARGETING';
+  const lvlDef = LEVELS[save.run.levelIndex];
+  const weights = zeroRecomputeWeights(save.run.zero, lvlDef.pool);
+  const family = zeroWeightedPick(weights, lvlDef.pool);
+  currentIncident = buildIncident(family, lvlDef);
+  activeWorkstationIndex = Math.floor(Math.random() * workstations.length);
+  workstations.forEach(function (ws, i) { setWorkstationState(i, i === activeWorkstationIndex, null); });
+
+  alertActive = true;
+  save.run.zero.state = 'OBSERVING';
+  AudioSys.startAlert();
+  npcReactToAlert(workstations[activeWorkstationIndex].anchor);
+
+  coreState = 'FREE_ROAM';
+  setInputEnabled(true);
+  setHudVisible(true);
+  hideAllOverlays();
+  refreshDisplays({});
+}
+
+function tryInteract() {
+  if (coreState !== 'FREE_ROAM' || activeModal) return;
+  const target = getInteractTarget();
+  if (!target) return;
+  AudioSys.playClick();
+  openTerminal();
+}
+
+function openTerminal() {
+  coreState = 'TERMINAL';
+  setInputEnabled(false);
+  AudioSys.stopAlert();
+  save.run.zero.state = 'ANALYZING';
+  renderTerminal(currentIncident, currentWsLabel(), investigatedIds, formatElapsed(incidentElapsed));
+  refreshDisplays({ investigation: 'IN PROGRESS' });
+}
+
+UI_CALLBACKS.onInvestigate = function (evId) {
+  investigatedIds.add(evId);
+  AudioSys.playInvestigate();
+  renderTerminal(currentIncident, currentWsLabel(), investigatedIds, formatElapsed(incidentElapsed));
+};
+
+UI_CALLBACKS.onDefenseChosen = function (defId) {
+  resolveIncident(defId, false);
+};
+
+function resolveIncident(defenseId, ignored) {
+  setInputEnabled(false);
+  AudioSys.stopAlert();
+
+  const outcome = ignored ? 'WRONG' : evaluateDefense(currentIncident, defenseId, investigatedIds);
+  const loss = integrityLoss(outcome, currentIncident.severity, save.run.levelIndex);
+  save.run.integrity = Math.max(0, Math.min(100, save.run.integrity - loss));
+  zeroRecordOutcome(save.run.zero, currentIncident, ignored ? '__IGNORED__' : defenseId, investigatedIds, outcome, incidentElapsed);
+  save.run.zero.state = 'ADAPTING';
+  // Recompute weights immediately so the behavioural note on the result
+  // screen reflects what ZERO just learned from this very mission, per the
+  // documented flow (resolve -> ZERO records -> ZERO adapts -> next
+  // mission), rather than lagging a mission behind.
+  const adaptPool = inFinalAttack ? FAMILY_KEYS : LEVELS[save.run.levelIndex].pool;
+  zeroRecomputeWeights(save.run.zero, adaptPool);
+
+  const missionResult = missionResultLabel(outcome);
+  const defLabel = ignored ? 'NO RESPONSE' : ((currentIncident.defenses.find(function (d) { return d.id === defenseId; }) || {}).label || defenseId);
+  const findings = currentIncident.evidence.filter(function (e) { return investigatedIds.has(e.id); }).map(function (e) { return e.label + ': ' + e.text; });
+
+  // IMPOSSIBLE's final-protocol stages are all still mission 30 (mission 5
+  // of IMPOSSIBLE) — every stage's outcome tallies into that same level's
+  // stats, and the log clearly marks which stage of that one mission it was.
+  const missionNumberForLog = inFinalAttack
+    ? (TOTAL_NORMAL_MISSIONS + ' (final stage ' + (finalStageIndex + 1) + '/' + finalStages.length + ')')
+    : (save.run.overallMissionNumber + 1);
+  const levelLabelForLog = LEVELS[save.run.levelIndex].label + (inFinalAttack ? ' \u2014 FINAL PROTOCOL' : '');
+
+  const key = outcome.toLowerCase();
+  const lvlStats = save.run.levelStats[save.run.levelIndex];
+  lvlStats[key] = (lvlStats[key] || 0) + 1;
+
+  save.run.missionLog.push({
+    missionNumber: missionNumberForLog, levelLabel: levelLabelForLog, familyLabel: currentIncident.familyLabel,
+    workstation: currentWsLabel(), outcome: outcome, defenseLabel: defLabel,
+    integrityDeltaText: (loss > 0 ? ('\u2212' + loss + '%') : '0%')
+  });
+
+  setWorkstationState(activeWorkstationIndex, false, outcome !== 'WRONG');
+  alertActive = false;
+
+  const breachedNow = save.run.integrity <= 0;
+
+  renderResult({
+    missionResult: missionResult, outcome: outcome,
+    explanation: buildExplanation(currentIncident, outcome, ignored), findings: findings,
+    integrityDeltaText: (loss > 0
+      ? ('\u2212' + loss + '% \u2192 ' + Math.round(save.run.integrity) + '% remaining')
+      : ('No loss \u2014 ' + Math.round(save.run.integrity) + '% remaining')),
+    zeroNote: zeroBehaviourNote(save.run.zero),
+    continueLabel: breachedNow ? 'VIEW BREACH REPORT' : 'CONTINUE'
+  });
+
+  coreState = 'RESULT';
+  refreshDisplays({ investigation: 'COMPLETE', defense: defLabel, result: missionResult, banner: 'INCIDENT RESOLVED' });
+
+  if (outcome === 'CORRECT') AudioSys.playCorrect();
+  else if (outcome === 'PARTIAL') AudioSys.playPartial();
+  else AudioSys.playWrong();
+
+  if (!inFinalAttack) {
+    save.run.overallMissionNumber += 1;
+    save.run.missionInLevel += 1;
+  }
+  save.lifetime.bestOverallMissionReached = Math.max(save.lifetime.bestOverallMissionReached || 0, save.run.overallMissionNumber);
+  writeSave(save);
+
+  pendingBreach = breachedNow;
+}
+
+UI_CALLBACKS.onResultContinue = function () {
+  AudioSys.playClick();
+  if (pendingBreach) { triggerBreach(); return; }
+  if (inFinalAttack) { advanceFinalAttack(); return; }
+  if (save.run.missionInLevel >= MISSIONS_PER_LEVEL) { showLevelComplete(); }
+  else { enterGameplay_resumeMidLevel(); }
+};
+
+function enterGameplay_resumeMidLevel() {
+  coreState = 'FREE_ROAM';
+  setInputEnabled(true);
+  setHudVisible(true);
+  hideAllOverlays();
+  beginMission();
+}
+
+/* ---------------- level complete ---------------- */
+function showLevelComplete() {
+  const lvlDef = LEVELS[save.run.levelIndex];
+  const stats = save.run.levelStats[save.run.levelIndex];
+  stats.completed = true;
+  stats.bestIntegrity = (stats.bestIntegrity == null) ? save.run.integrity : Math.max(stats.bestIntegrity, save.run.integrity);
+  writeSave(save);
+  coreState = 'LEVEL_COMPLETE';
+  setInputEnabled(false);
+  hideAllOverlays();
+  refreshDisplays({ threat: 'NONE', target: '\u2014' });
+
+  // Dim the screen and announce the completed level before revealing the
+  // stats panel underneath it.
+  playLevelTransition(
+    'LEVEL COMPLETE',
+    lvlDef.label,
+    'Compiling incident report&hellip;',
+    2200,
+    function () {
+      renderLevelComplete({ levelLabel: lvlDef.label, correct: stats.correct || 0, partial: stats.partial || 0, wrong: stats.wrong || 0, integrity: save.run.integrity });
+    }
+  );
+}
+
+UI_CALLBACKS.onLevelCompleteContinue = function () {
+  AudioSys.playClick();
+  // showLevelComplete() only ever fires for levels 0..4 now — IMPOSSIBLE's
+  // 5th mission is intercepted inside beginMission() and routed into the
+  // final protocol instead, so there is always a next level to unlock here.
+  const nextIndex = save.run.levelIndex + 1;
+  const nextLabel = LEVELS[nextIndex].label;
+  save.run.levelIndex = nextIndex;
+  save.run.missionInLevel = 0;
+  save.run.unlockedLevels[nextIndex] = true;
+  writeSave(save);
+  hideAllOverlays();
+
+  // Dim the screen and announce the upcoming level before dropping the
+  // player back into free-roam for its first mission.
+  playLevelTransition(
+    'NEXT LEVEL',
+    nextLabel,
+    'ZERO is recalibrating its approach&hellip;',
+    2200,
+    function () {
+      enterGameplay_resumeMidLevel();
+    }
+  );
+};
+
+/* ---------------- breach ---------------- */
+function triggerBreach() {
+  save.lifetime.breaches = (save.lifetime.breaches || 0) + 1;
+  const missionReached = inFinalAttack
+    ? (save.run.overallMissionNumber + ' / ' + TOTAL_NORMAL_MISSIONS + ' \u2014 IMPOSSIBLE mission 5, final protocol stage ' + (finalStageIndex + 1) + ' of ' + finalStages.length)
+    : (save.run.overallMissionNumber + ' / ' + TOTAL_NORMAL_MISSIONS);
+  writeSave(save);
+  coreState = 'BREACH';
+  setInputEnabled(false);
+  AudioSys.stopAmbience();
+  AudioSys.playBreach();
+  renderBreach({
+    explain: 'System integrity reached zero. NEXUS core systems have been compromised and the run has ended.',
+    missionReached: missionReached
+  });
+}
+
+UI_CALLBACKS.onBreachToMenu = function () {
+  AudioSys.playClick();
+  resetActiveRun();
+  showMainMenu();
+};
+
+function resetActiveRun() {
+  const keepSettings = save.settings, keepLifetime = save.lifetime;
+  save = defaultSave();
+  save.settings = keepSettings;
+  save.lifetime = keepLifetime;
+  writeSave(save);
+  inFinalAttack = false; finalStages = []; finalStageIndex = 0;
+  currentIncident = null; alertActive = false; activeWorkstationIndex = -1;
+}
+
+/* ---------------- final adaptive protocol ---------------- */
+function rankCategoriesByWeakness(z) {
+  return CATEGORY_KEYS.slice().sort(function (a, b) {
+    const ra = z.categoryStats[a].attempts ? (z.categoryStats[a].correct / z.categoryStats[a].attempts) : 0.5;
+    const rb = z.categoryStats[b].attempts ? (z.categoryStats[b].correct / z.categoryStats[b].attempts) : 0.5;
+    return ra - rb;
+  });
+}
+
+function pickFinalStageFamily(weakRanked) {
+  const weights = {};
+  FAMILY_KEYS.forEach(function (f) {
+    const rank = weakRanked.indexOf(CATEGORY_OF[f]);
+    weights[f] = rank === 0 ? 3.2 : (rank === 1 ? 1.6 : 0.8);
+  });
+  return zeroWeightedPick(weights, FAMILY_KEYS);
+}
+
+function beginFinalAttack() {
+  inFinalAttack = true;
+  save.run.finalAttempted = true;
+  writeSave(save);
+  const weakRanked = rankCategoriesByWeakness(save.run.zero);
+  const stageCount = 3 + Math.floor(Math.random() * 2);
+  finalStages = [];
+  for (let i = 0; i < stageCount; i++) finalStages.push(pickFinalStageFamily(weakRanked));
+  finalStageIndex = 0;
+  coreState = 'FINAL_INTRO';
+  setInputEnabled(false);
+  renderFinalIntro('This is IMPOSSIBLE \u2014 mission 5 of 5: ZERO has profiled ' + stageCount + ' pressure points from your response ' +
+    'history across this entire run and built a personalized, multi-stage attack around them. ' +
+    'Prepare for ' + stageCount + ' stages back to back \u2014 there is no pause between them.');
+}
+
+UI_CALLBACKS.onFinalIntroContinue = function () {
+  AudioSys.playClick();
+  beginFinalStage();
+};
+
+function beginFinalStage() {
+  coreState = 'FINAL_STAGE_TRANSITION';
+  setInputEnabled(false);
+  const family = finalStages[finalStageIndex];
+  renderFinalStage(finalStageIndex + 1, finalStages.length, THREATS[family].label);
+}
+
+UI_CALLBACKS.onFinalStageContinue = function () {
+  AudioSys.playClick();
+  const family = finalStages[finalStageIndex];
+  const lvlDef = LEVELS[LEVELS.length - 1];
+  currentIncident = buildIncident(family, lvlDef);
+  activeWorkstationIndex = Math.floor(Math.random() * workstations.length);
+  workstations.forEach(function (ws, i) { setWorkstationState(i, i === activeWorkstationIndex, null); });
+  investigatedIds = new Set();
+  incidentElapsed = 0;
+  alertActive = true;
+  AudioSys.startAlert();
+  npcReactToAlert(workstations[activeWorkstationIndex].anchor);
+
+  coreState = 'FREE_ROAM';
+  setInputEnabled(true);
+  setHudVisible(true);
+  hideAllOverlays();
+  refreshDisplays({});
+};
+
+function advanceFinalAttack() {
+  finalStageIndex++;
+  if (finalStageIndex >= finalStages.length) finishFinalAttack();
+  else beginFinalStage();
+}
+
+function finishFinalAttack() {
+  // The final protocol completing IS the completion of IMPOSSIBLE's
+  // mission 5 — and therefore mission 30/30 overall. Close out the mission
+  // and level bookkeeping here, exactly once, rather than per-stage.
+  inFinalAttack = false;
+  save.run.missionInLevel = MISSIONS_PER_LEVEL;
+  save.run.overallMissionNumber = TOTAL_NORMAL_MISSIONS;
+  const stats = save.run.levelStats[save.run.levelIndex];
+  stats.completed = true;
+  stats.bestIntegrity = (stats.bestIntegrity == null) ? save.run.integrity : Math.max(stats.bestIntegrity, save.run.integrity);
+
+  const integrity = save.run.integrity;
+  save.run.finalResult = integrity >= 70 ? 'SECURED' : 'WEAKENED';
+  save.lifetime.completions = (save.lifetime.completions || 0) + 1;
+  save.lifetime.bestOverallMissionReached = TOTAL_NORMAL_MISSIONS;
+  writeSave(save);
+
+  coreState = 'FINAL_RESULT';
+  setInputEnabled(false);
+  AudioSys.stopAmbience();
+  AudioSys.playFinalResult(true);
+  renderFinalResult({
+    title: integrity >= 70 ? 'NEXUS SECURED' : 'NEXUS SURVIVED \u2014 WEAKENED',
+    tagClass: integrity >= 70 ? 'correct' : 'partial',
+    explain: integrity >= 70
+      ? 'ZERO\u2019s final protocol was contained with core systems intact. All 30 missions complete \u2014 NEXUS holds the line.'
+      : 'The final protocol was survived, but at real cost. All 30 missions complete \u2014 NEXUS remains standing \u2014 barely.',
+    integrity: integrity
+  });
+}
+
+UI_CALLBACKS.onFinalResultMenu = function () {
+  AudioSys.playClick();
+  resetActiveRun();
+  showMainMenu();
+};
+
+/* ---------------- pause ---------------- */
+function openPause() {
+  if (activeModal || coreState === 'MENU' || coreState === 'LEVEL_SELECT' || coreState === 'LOADING') return;
+  activeModal = 'PAUSE';
+  AudioSys.stopAlert();
+  setInputEnabled(false);
+  showOverlay('pauseMenu');
+}
+
+function resumeFromPause() {
+  activeModal = null;
+  if (coreState === 'TERMINAL') {
+    renderTerminal(currentIncident, currentWsLabel(), investigatedIds, formatElapsed(incidentElapsed));
+  } else if (coreState === 'FREE_ROAM') {
+    hideAllOverlays();
+    setInputEnabled(true);
+    if (alertActive) AudioSys.startAlert();
+  } else {
+    hideAllOverlays();
+  }
+}
+
+function restartMission() {
+  activeModal = null;
+  if (inFinalAttack) {
+    const family = finalStages[finalStageIndex];
+    currentIncident = buildIncident(family, LEVELS[LEVELS.length - 1]);
+  } else {
+    const lvlDef = LEVELS[save.run.levelIndex];
+    currentIncident = buildIncident(currentIncident.family, lvlDef);
+  }
+  investigatedIds = new Set();
+  incidentElapsed = 0;
+  alertActive = true;
+  coreState = 'FREE_ROAM';
+  setInputEnabled(true);
+  setHudVisible(true);
+  hideAllOverlays();
+  AudioSys.startAlert();
+  refreshDisplays({});
+}
+
+/* ---------------- settings + mission log (shared modals) ---------------- */
+function openSettings(returnTo) {
+  activeModal = 'SETTINGS';
+  showSettings(returnTo);
+  applySettingsToUI(save.settings);
+}
+
+function closeSettings() {
+  activeModal = null;
+  if (settingsReturnTo === 'PAUSE') showOverlay('pauseMenu');
+  else if (settingsReturnTo === 'MENU') showOverlay('mainMenu');
+  else renderLevelSelect(save, true);
+}
+
+/* ---------------- info / intelligence database ---------------- */
+function openInfo() {
+  activeModal = 'INFO';
+  showOverlay('infoPanel');
+}
+
+function closeInfo() {
+  activeModal = null;
+  showOverlay('mainMenu');
+}
+
+function wireInfoThreatCards() {
+  DOM.infoPanel.querySelectorAll('.threatCard').forEach(function (card) {
+    function toggle() { card.classList.toggle('open'); }
+    card.addEventListener('click', function () { AudioSys.playClick(); toggle(); });
+    card.addEventListener('keydown', function (e) {
+      if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); AudioSys.playClick(); toggle(); }
+    });
+  });
+}
+
+function openMissionLog(returnTo) {
+  activeModal = 'MISSIONLOG';
+  missionLogReturnTo = returnTo;
+  renderMissionLog(save);
+}
+
+function closeMissionLog() {
+  activeModal = null;
+  if (missionLogReturnTo === 'PAUSE') showOverlay('pauseMenu');
+  else renderLevelSelect(save, true);
+}
+
+/* ---------------- global input: interact + escape ---------------- */
+function handleEscape() {
+  if (activeModal === 'SETTINGS') { AudioSys.playClick(); closeSettings(); return; }
+  if (activeModal === 'MISSIONLOG') { AudioSys.playClick(); closeMissionLog(); return; }
+  if (activeModal === 'INFO') { AudioSys.playClick(); closeInfo(); return; }
+  if (activeModal === 'PAUSE') { resumeFromPause(); return; }
+  if (coreState === 'FREE_ROAM' || coreState === 'TERMINAL') { openPause(); return; }
+}
+
+function wireStaticButtons() {
+  DOM.btnPlay.addEventListener('click', function () {
+    AudioSys.init(); AudioSys.playClick();
+    if (save.run.active) {
+      const ok = window.confirm('Start a new run? This will erase your current in-progress run. Settings and lifetime stats are kept.');
+      if (!ok) return;
+    }
+    startNewRun();
+  });
+  DOM.btnContinue.addEventListener('click', function () {
+    if (!save.run.active) return;
+    AudioSys.init(); AudioSys.playClick();
+    goToLevelSelect();
+  });
+  DOM.btnSettings.addEventListener('click', function () {
+    AudioSys.init(); AudioSys.playClick();
+    openSettings('MENU');
+  });
+  DOM.btnInfo.addEventListener('click', function () {
+    AudioSys.init(); AudioSys.playClick();
+    openInfo();
+  });
+  DOM.btnCloseInfo.addEventListener('click', function () { AudioSys.playClick(); closeInfo(); });
+  DOM.btnQuit.addEventListener('click', function () {
+    AudioSys.playClick();
+    try { window.close(); } catch (e) { /* blocked by browser, expected */ }
+    setTimeout(function () {
+      const box = document.querySelector('#mainMenu .menuBox');
+      if (box) box.innerHTML = '<div class="title">MEMORY<span>//</span>LEAK</div><div class="explain" style="margin-top:18px">You may now close this browser tab.</div>';
+    }, 300);
+  });
+
+  DOM.btnLevelSelectBack.addEventListener('click', function () { AudioSys.playClick(); showMainMenu(); });
+  DOM.btnLevelSelectLogs.addEventListener('click', function () { AudioSys.playClick(); openMissionLog('LEVEL_SELECT'); });
+
+  DOM.btnResume.addEventListener('click', function () { AudioSys.playClick(); resumeFromPause(); });
+  DOM.btnRestartMission.addEventListener('click', function () { AudioSys.playClick(); restartMission(); });
+  DOM.btnPauseSettings.addEventListener('click', function () { AudioSys.playClick(); openSettings('PAUSE'); });
+  DOM.btnPauseLogs.addEventListener('click', function () { AudioSys.playClick(); openMissionLog('PAUSE'); });
+  DOM.btnQuitToMenu.addEventListener('click', function () {
+    AudioSys.playClick();
+    activeModal = null;
+    inFinalAttack = false;
+    showMainMenu();
+  });
+
+  DOM.btnCloseSettings.addEventListener('click', function () { AudioSys.playClick(); closeSettings(); });
+  DOM.btnCloseMissionLog.addEventListener('click', function () { AudioSys.playClick(); closeMissionLog(); });
+
+  DOM.sensSlider.addEventListener('input', function () {
+    const v = parseInt(DOM.sensSlider.value, 10);
+    save.settings.mouseSensitivity = sliderToSens(v);
+    setSensitivity(save.settings.mouseSensitivity);
+    writeSave(save);
+  });
+  DOM.volMaster.addEventListener('input', function () {
+    save.settings.masterVolume = parseInt(DOM.volMaster.value, 10) / 100;
+    AudioSys.setVolumes(save.settings.masterVolume, save.settings.ambienceVolume, save.settings.sfxVolume);
+    writeSave(save);
+  });
+  DOM.volAmbience.addEventListener('input', function () {
+    save.settings.ambienceVolume = parseInt(DOM.volAmbience.value, 10) / 100;
+    AudioSys.setVolumes(save.settings.masterVolume, save.settings.ambienceVolume, save.settings.sfxVolume);
+    writeSave(save);
+  });
+  DOM.volSfx.addEventListener('input', function () {
+    save.settings.sfxVolume = parseInt(DOM.volSfx.value, 10) / 100;
+    AudioSys.setVolumes(save.settings.masterVolume, save.settings.ambienceVolume, save.settings.sfxVolume);
+    writeSave(save);
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.code === 'KeyE') tryInteract();
+    if (e.code === 'Escape') handleEscape();
+
+    // Level Select keyboard navigation: Up/Down highlight a level, Enter
+    // launches whichever level is currently highlighted — identical to
+    // clicking that level's ENTER/RESUME button. Locked/completed rows can
+    // be highlighted (so keyboard users can see why they're unavailable)
+    // but Enter on them is a no-op; activateLevelSelectFocus() enforces that.
+    if (coreState === 'LEVEL_SELECT' && !activeModal) {
+      if (e.code === 'ArrowDown') { e.preventDefault(); moveLevelSelectFocus(save, 1); }
+      else if (e.code === 'ArrowUp') { e.preventDefault(); moveLevelSelectFocus(save, -1); }
+      else if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); activateLevelSelectFocus(save); }
+    }
+  });
+
+  document.addEventListener('pointerlockchange', function () {
+    if (!document.pointerLockElement && coreState === 'FREE_ROAM' && !activeModal) {
+      openPause();
+    }
+  });
+}
+
+/* ---------------- boot ---------------- */
+function init() {
+  cacheDom();
+  save = loadSave();
+  setSensitivity(save.settings.mouseSensitivity);
+
+  if (typeof THREE === 'undefined') {
+    DOM.loadingLines.innerHTML = '<div style="color:#ff4d5e">Unable to load the 3D engine (Three.js) from the CDN.<br>Please check your internet connection and reopen this file.</div>';
+    return;
+  }
+
+  initScene();
+  initPlayerControls();
+  initNPCs();
+  wireStaticButtons();
+  wireInfoThreatCards();
+
+  clock = new THREE.Clock();
+  requestAnimationFrame(animate);
+
+  runLoadingSequence(function () {
+    hideLoadingScreen();
+    showMainMenu();
+  });
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock ? Math.min(clock.getDelta(), 0.05) : 0;
+  const elapsed = clock ? clock.getElapsedTime() : 0;
+
+  if (activeModal !== 'PAUSE') {
+    if (coreState === 'FREE_ROAM') {
+      updatePlayer(dt);
+      const target = getInteractTarget();
+      if (target) showPrompt('[E] ACCESS TERMINAL \u2014 ' + target.label); else hidePrompt();
+      showClickToResume(!isPointerLocked());
+    } else {
+      showClickToResume(false);
+    }
+
+    updateNPCs(dt);
+    if (scene) updateSceneAmbient(dt, elapsed);
+
+    if ((coreState === 'FREE_ROAM' || coreState === 'TERMINAL') && alertActive) {
+      incidentElapsed += dt;
+      if (coreState === 'TERMINAL') updateTerminalTimer(formatElapsed(incidentElapsed));
+      if (incidentElapsed >= INCIDENT_TIMEOUT_SECONDS) resolveIncident(null, true);
+    }
+  }
+
+  if (renderer && scene && camera) renderer.render(scene, camera);
+}
+
+window.addEventListener('DOMContentLoaded', init);
+
+</script>
+</body>
+</html>
