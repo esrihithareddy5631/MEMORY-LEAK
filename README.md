@@ -2,6 +2,12 @@
 
 > Every defense leaves a pattern.
 
+
+## 🏆 Hackathon Achievement
+**MEMORY//LEAK won 2nd Prize at the Amrita Cyber Nation (ACN) Hackathon 2026 conducted at Amrita Vishwa Vidyapeetham, Chennai**
+An interactive 3D cybersecurity simulation featuring an AI-inspired, rule-based adaptive adversary, threat investigation, incident response, and strategic decision-making.
+
+
 A browser-based 3D cybersecurity strategy game where players investigate simulated incidents, choose defensive responses, and face an adaptive attacker that reacts to their behaviour.
 
 Players act as cybersecurity analysts protecting **NEXUS**, a fictional organization. **ZERO**, the game's rule-based attacker, observes investigation habits and defensive decisions to influence future threats.
